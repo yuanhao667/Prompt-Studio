@@ -546,6 +546,7 @@ final class AppModel: ObservableObject {
   @Published var currentOnLeading = false
   @Published var showsComparison = false
   @Published var hasUnversionedChanges = false
+  @Published var autosaveStatus = "已自动保存"
   @Published var status = "就绪"
   @Published var errorMessage: String?
   @Published var deepSeekAPIKey = ""
@@ -590,7 +591,6 @@ final class AppModel: ObservableObject {
         workspace: workspace,
         repository: repository
       )
-      status = "工作稿已从本地恢复"
     } catch {
       repository = nil
       errorMessage = error.localizedDescription
@@ -612,15 +612,6 @@ final class AppModel: ObservableObject {
       deepSeekConnectionSucceeded = false
       deepSeekConnectionMessage = "无法读取 Keychain：\(error.localizedDescription)"
     }
-  }
-
-  var versionLabel: String {
-    guard let workspace else { return "不可用" }
-    return workspace.currentVersion == 0 ? "尚无正式版本" : "当前版本 V\(workspace.currentVersion)"
-  }
-
-  var saveStateLabel: String {
-    hasUnversionedChanges ? "有未保存到正式版本的修改" : "工作稿已自动保存"
   }
 
   var comparisonTitle: String {
@@ -645,6 +636,7 @@ final class AppModel: ObservableObject {
     workspace.sections[index].title = title
     self.workspace = workspace
     if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      autosaveStatus = "尚未自动保存"
       status = "栏目名称不能为空；输入有效名称后会自动保存"
     } else {
       persistDraft()
@@ -765,7 +757,10 @@ final class AppModel: ObservableObject {
         workspace: workspace,
         number: version.number
       )
-      if let restored = self.workspace { try saveMarkdownDraft(restored) }
+      if let restored = self.workspace {
+        try saveMarkdownDraft(restored)
+        autosaveStatus = "已自动保存"
+      }
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
       currentOnLeading = false
@@ -1057,8 +1052,12 @@ final class AppModel: ObservableObject {
       try repository.saveDraft(workspace)
       try saveMarkdownDraft(workspace)
       if markChanged { hasUnversionedChanges = true }
+      autosaveStatus = "已自动保存"
       status = "工作稿已自动保存"
-    } catch { report(error) }
+    } catch {
+      autosaveStatus = "自动保存失败"
+      report(error)
+    }
   }
 
   private func persistComparison() {
@@ -1483,8 +1482,6 @@ struct ContentView: View {
 
   @ViewBuilder
   private var editorPage: some View {
-    editorHeader
-    Divider()
     if let workspace = model.workspace {
       if !model.showsComparison {
         currentPane(workspace)
@@ -1507,61 +1504,6 @@ struct ContentView: View {
     } else {
       emptyState
     }
-  }
-
-  private var editorHeader: some View {
-    VStack(spacing: 10) {
-      HStack(spacing: 12) {
-        Text(model.versionLabel)
-          .foregroundStyle(.secondary)
-        Text(model.saveStateLabel)
-          .font(.caption.bold())
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(
-            model.hasUnversionedChanges ? Color.orange.opacity(0.15) : Color.green.opacity(0.15),
-            in: Capsule()
-          )
-        Spacer()
-        Button {
-          if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.status = "请先配置 DeepSeek API Key"
-            page = .settings
-          } else {
-            model.generatePrompt()
-          }
-        } label: {
-          HStack(spacing: 7) {
-            if model.isGeneratingPrompt {
-              ProgressView().controlSize(.small)
-            } else {
-              Image(systemName: "sparkles")
-            }
-            Text(model.isGeneratingPrompt ? "生成中…" : "AI 生成")
-          }
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(model.isGeneratingPrompt)
-        Button("保存为新版本") { model.saveVersion() }
-      }
-
-      HStack {
-        Button("新增维度") { model.addSection() }
-        if model.showsComparison {
-          Button {
-            model.clearComparison()
-          } label: {
-            Image(systemName: "rectangle.compress.vertical")
-          }
-          .help("收起对照，返回单栏编辑")
-          Text("当前：\(model.comparisonTitle)")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        Spacer()
-      }
-    }
-    .padding(14)
   }
 
   private var filteredVersions: [VersionSummary] {
@@ -1760,6 +1702,38 @@ struct ContentView: View {
           .font(.headline)
           .foregroundStyle(.blue)
         Spacer()
+        Button("新增维度") { model.addSection() }
+        if model.showsComparison {
+          Button {
+            model.clearComparison()
+          } label: {
+            Image(systemName: "rectangle.compress.vertical")
+              .frame(width: 28, height: 28)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("收起对照，返回单栏编辑")
+        }
+        Button {
+          if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.status = "请先配置 DeepSeek API Key"
+            page = .settings
+          } else {
+            model.generatePrompt()
+          }
+        } label: {
+          HStack(spacing: 7) {
+            if model.isGeneratingPrompt {
+              ProgressView().controlSize(.small)
+            } else {
+              Image(systemName: "sparkles")
+            }
+            Text(model.isGeneratingPrompt ? "生成中…" : "AI 生成")
+          }
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(model.isGeneratingPrompt)
+        Button("保存新版本") { model.saveVersion() }
       }
 
       VStack(spacing: 0) {
@@ -2048,7 +2022,12 @@ struct ContentView: View {
 
   private var footer: some View {
     HStack {
-      Text(model.status)
+      Label(
+        model.autosaveStatus,
+        systemImage: model.autosaveStatus == "已自动保存"
+          ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+      )
+      .foregroundStyle(model.autosaveStatus == "已自动保存" ? Color.green : Color.orange)
       Spacer()
       Text("Markdown 文件：\(model.documentURL?.path ?? "尚未选择")")
     }
