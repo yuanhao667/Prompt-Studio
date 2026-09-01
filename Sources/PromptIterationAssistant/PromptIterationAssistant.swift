@@ -49,6 +49,7 @@ struct AppRootView: View {
   @State private var pendingRenameURL: URL?
   @State private var renameText = ""
   @State private var pendingDocumentDeletion: URL?
+  @State private var pendingVersionDeletion: (number: Int, promptFolder: URL)?
   @State private var pendingVersionEdit: VersionSummary?
 
   var body: some View {
@@ -157,6 +158,27 @@ struct AppRootView: View {
       Button("取消", role: .cancel) { pendingVersionEdit = nil }
     } message: {
       Text("当前工作稿会替换为这个历史版本，已保存的版本不受影响。")
+    }
+    .confirmationDialog(
+      "删除 V\(pendingVersionDeletion?.number ?? 0)？",
+      isPresented: Binding(
+        get: { pendingVersionDeletion != nil },
+        set: { if !$0 { pendingVersionDeletion = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      Button("删除版本", role: .destructive) {
+        if let pendingVersionDeletion {
+          deleteHistoryVersion(
+            pendingVersionDeletion.number,
+            in: pendingVersionDeletion.promptFolder
+          )
+        }
+        pendingVersionDeletion = nil
+      }
+      Button("取消", role: .cancel) { pendingVersionDeletion = nil }
+    } message: {
+      Text("该历史版本会移到废纸篓，当前工作稿不受影响。")
     }
   }
 
@@ -387,22 +409,7 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
-          Button("保存新版本", systemImage: "doc.badge.plus") {
-            saveNewVersion(for: item.url)
-          }
-          Button("加入对比", systemImage: "rectangle.split.2x1") {
-            compareHistoryVersion(number, in: item.url.deletingLastPathComponent())
-          }
-          Button("基于此版本编辑", systemImage: "square.and.pencil") {
-            editHistoryVersion(number, in: item.url.deletingLastPathComponent())
-          }
-          Button("复制版本", systemImage: "doc.on.doc") {
-            copyHistoryVersion(number, in: item.url.deletingLastPathComponent())
-          }
-          Divider()
-          Button("在 Finder 中显示", systemImage: "folder") {
-            NSWorkspace.shared.activateFileViewerSelecting([item.url])
-          }
+          versionMenuActions(number: number, promptFolder: item.url.deletingLastPathComponent())
         } label: {
           Image(systemName: "ellipsis")
             .frame(width: 28, height: 28)
@@ -445,17 +452,7 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
-          Button("加入对比", systemImage: "rectangle.split.2x1") {
-            compareLatestVersion(in: item.url.deletingLastPathComponent())
-          }
-          Button("重命名", systemImage: "pencil") { beginRenaming(item.url) }
-          Button("在 Finder 中显示", systemImage: "folder") {
-            NSWorkspace.shared.activateFileViewerSelecting([item.url])
-          }
-          Divider()
-          Button("移到废纸篓", systemImage: "trash", role: .destructive) {
-            pendingDocumentDeletion = item.url
-          }
+          versionMenuActions(number: number, promptFolder: item.url.deletingLastPathComponent())
         } label: {
           Image(systemName: "ellipsis")
             .frame(width: 28, height: 28)
@@ -482,6 +479,31 @@ struct AppRootView: View {
           pendingDocumentDeletion = item.url
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private func versionMenuActions(number: Int, promptFolder: URL) -> some View {
+    Button("保存新版本", systemImage: "doc.badge.plus") {
+      saveNewVersion(in: promptFolder)
+    }
+    Button("加入对比", systemImage: "rectangle.split.2x1") {
+      compareHistoryVersion(number, in: promptFolder)
+    }
+    Button("基于此版本编辑", systemImage: "square.and.pencil") {
+      editHistoryVersion(number, in: promptFolder)
+    }
+    Button("复制版本", systemImage: "doc.on.doc") {
+      copyHistoryVersion(number, in: promptFolder)
+    }
+    Divider()
+    Button("在 Finder 中显示", systemImage: "folder") {
+      let versionURL = promptFolder.appendingPathComponent("V\(number).md")
+      NSWorkspace.shared.activateFileViewerSelecting([versionURL])
+    }
+    Divider()
+    Button("删除版本", systemImage: "trash", role: .destructive) {
+      pendingVersionDeletion = (number, promptFolder)
     }
   }
 
@@ -681,28 +703,49 @@ struct AppRootView: View {
     workspacePage = .editor
   }
 
-  private func compareLatestVersion(in promptFolder: URL) {
-    do {
-      let numbers = try FileManager.default.contentsOfDirectory(
-        at: promptFolder,
-        includingPropertiesForKeys: nil,
-        options: [.skipsHiddenFiles]
-      ).compactMap(versionNumber).sorted(by: >)
-      guard numbers.count > 1 else {
-        launcherError = "至少保存两个版本后才能对比"
-        return
-      }
-      compareHistoryVersion(numbers[1], in: promptFolder)
-    } catch {
-      launcherError = error.localizedDescription
-    }
-  }
-
   private func saveNewVersion(for documentURL: URL) {
     if model?.documentURL?.standardizedFileURL != documentURL.standardizedFileURL {
       openDocument(documentURL)
     }
     if model?.saveVersion() == true, let folderURL { refreshFiles(in: folderURL) }
+  }
+
+  private func saveNewVersion(in promptFolder: URL) {
+    do {
+      guard let documentURL = try workingDocument(in: promptFolder) else {
+        launcherError = "这个项目中没有可编辑的 Prompt 文件"
+        return
+      }
+      saveNewVersion(for: documentURL)
+    } catch {
+      launcherError = error.localizedDescription
+    }
+  }
+
+  private func deleteHistoryVersion(_ number: Int, in promptFolder: URL) {
+    do {
+      guard let documentURL = try workingDocument(in: promptFolder) else {
+        launcherError = "这个项目中没有可编辑的 Prompt 文件"
+        return
+      }
+      if model?.documentURL?.standardizedFileURL != documentURL.standardizedFileURL {
+        openDocument(documentURL)
+      }
+      if model?.deleteVersion(number) == true {
+        if workspacePage == .history { workspacePage = .editor }
+        if let folderURL { refreshFiles(in: folderURL) }
+      }
+    } catch {
+      launcherError = error.localizedDescription
+    }
+  }
+
+  private func workingDocument(in promptFolder: URL) throws -> URL? {
+    try FileManager.default.contentsOfDirectory(
+      at: promptFolder,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    ).first { versionNumber(from: $0) == nil && isPromptDocument($0) }
   }
 
   private func beginRenaming(_ url: URL) {
@@ -1226,6 +1269,46 @@ final class AppModel: ObservableObject {
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         if versionSaveFeedback == feedback { versionSaveFeedback = nil }
       }
+      return true
+    } catch {
+      report(error)
+      return false
+    }
+  }
+
+  @discardableResult
+  func deleteVersion(_ number: Int) -> Bool {
+    guard var workspace, let repository else { return false }
+    let versionURL = documentURL.map { Self.versionFileURL(number: number, beside: $0) }
+    var trashedURL: NSURL?
+    do {
+      if let versionURL, FileManager.default.fileExists(atPath: versionURL.path) {
+        try FileManager.default.trashItem(at: versionURL, resultingItemURL: &trashedURL)
+      }
+      do {
+        try repository.deleteVersion(projectID: workspace.id, number: number)
+      } catch {
+        if let trashedURL, let versionURL {
+          try? FileManager.default.moveItem(at: trashedURL as URL, to: versionURL)
+        }
+        throw error
+      }
+
+      versions = try repository.listVersions(projectID: workspace.id)
+      workspace.currentVersion = versions.first?.number ?? 0
+      self.workspace = workspace
+      if selectedHistoryVersion?.number == number {
+        selectedHistoryVersion = versions.first
+        selectedHistorySections = try versions.first.map {
+          try repository.versionSections(projectID: workspace.id, number: $0.number)
+        } ?? []
+      }
+      if comparison?.kind == .history, comparison?.sourceVersion == number {
+        try repository.clearComparison(projectID: workspace.id)
+        comparison = nil
+        showsComparison = false
+      }
+      status = "已删除 V\(number)"
       return true
     } catch {
       report(error)
@@ -1871,6 +1954,7 @@ struct ContentView: View {
   @State private var sectionDropTargetID: String?
   @State private var currentPaneDropTargeted = false
   @State private var comparisonPaneDropTargeted = false
+  @State private var isPreviewingPrompt = false
 
   private var promptNameFieldWidth: CGFloat {
     let displayedName = promptName.isEmpty ? "Prompt 名称" : promptName
@@ -1916,6 +2000,7 @@ struct ContentView: View {
     } message: {
       Text("该栏目会从当前工作稿和手动候选中删除；已保存的正式版本不受影响。")
     }
+    .onChange(of: model.documentURL) { _ in isPreviewingPrompt = false }
   }
 
   private var settingsPage: some View {
@@ -2044,6 +2129,15 @@ struct ContentView: View {
             .help("关闭当前版本")
           }
           Spacer()
+          Button { isPreviewingPrompt.toggle() } label: {
+            Text(isPreviewingPrompt ? "退出预览" : "预览")
+              .frame(height: 28)
+              .padding(.horizontal, 6)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help(isPreviewingPrompt ? "退出预览" : "预览完整 Prompt")
+
           Button {
             if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
               model.status = "请先配置 DeepSeek API Key"
@@ -2052,11 +2146,13 @@ struct ContentView: View {
               model.generatePrompt()
             }
           } label: {
-            Image(systemName: model.isGeneratingPrompt ? "hourglass" : "sparkles")
-              .frame(width: 28, height: 28)
+            Text(model.isGeneratingPrompt ? "生成中" : "AI 生成")
+              .frame(height: 28)
+              .padding(.horizontal, 6)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
+          .foregroundStyle(.blue)
           .disabled(model.isGeneratingPrompt)
           .help(model.isGeneratingPrompt ? "生成中" : "AI 生成")
 
@@ -2075,23 +2171,33 @@ struct ContentView: View {
 
         Divider()
 
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(workspace.sections) { section in
-              currentSectionEditor(section)
-              if section.id != workspace.sections.last?.id {
-                Divider().padding(.vertical, 6)
+        if !isPreviewingPrompt {
+          ScrollView {
+            LazyVStack(spacing: 0) {
+              ForEach(workspace.sections) { section in
+                currentSectionEditor(section)
+                if section.id != workspace.sections.last?.id {
+                  Divider().padding(.vertical, 6)
+                }
               }
+              Button("新增维度") { model.addSection() }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 12)
             }
-            Button("新增维度") { model.addSection() }
-              .buttonStyle(.plain)
-              .foregroundStyle(.blue)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(.horizontal, 10)
-              .padding(.vertical, 12)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
           }
-          .padding(.horizontal, 10)
-          .padding(.bottom, 10)
+        } else {
+          ScrollView {
+            Text(PromptMarkdown.renderAll(workspace.sections))
+              .font(.system(.body, design: .monospaced))
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .topLeading)
+              .padding(16)
+          }
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2169,17 +2275,27 @@ struct ContentView: View {
 
           Divider()
 
-          ScrollView {
-            LazyVStack(spacing: 0) {
-              ForEach(comparison.sections) { section in
-                comparisonSectionEditor(section)
-                if section.id != comparison.sections.last?.id {
-                  Divider().padding(.vertical, 6)
+          if !isPreviewingPrompt {
+            ScrollView {
+              LazyVStack(spacing: 0) {
+                ForEach(comparison.sections) { section in
+                  comparisonSectionEditor(section)
+                  if section.id != comparison.sections.last?.id {
+                    Divider().padding(.vertical, 6)
+                  }
                 }
               }
+              .padding(.horizontal, 10)
+              .padding(.bottom, 10)
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+          } else {
+            ScrollView {
+              Text(comparisonMarkdown(comparison.sections))
+                .font(.system(.body, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(16)
+            }
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2216,6 +2332,12 @@ struct ContentView: View {
     } isTargeted: {
       comparisonPaneDropTargeted = $0
     }
+  }
+
+  private func comparisonMarkdown(_ sections: [ComparisonSection]) -> String {
+    sections.sorted { $0.position < $1.position }
+      .map { "# \($0.title)\n\($0.content)" }
+      .joined(separator: "\n\n")
   }
 
   private func currentSectionEditor(_ section: PromptSection) -> some View {

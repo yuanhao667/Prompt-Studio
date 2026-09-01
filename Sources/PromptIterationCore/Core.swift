@@ -502,6 +502,35 @@ public final class WorkspaceRepository {
     }
   }
 
+  public func deleteVersion(projectID: String, number: Int) throws {
+    try withConnection(write: true) { database in
+      try ensureProject(database, projectID: projectID)
+      let count = try scalarInt(
+        database,
+        "SELECT COUNT(*) FROM versions WHERE project_id = ? AND version_number = ?",
+        [.text(projectID), .integer(Int64(number))]
+      )
+      guard count == 1 else {
+        throw PromptIterationError.notFound("未找到版本 V\(number)。")
+      }
+      try execute(
+        database,
+        "DELETE FROM versions WHERE project_id = ? AND version_number = ?",
+        [.text(projectID), .integer(Int64(number))]
+      )
+      let latest = try scalarInt(
+        database,
+        "SELECT COALESCE(MAX(version_number), 0) FROM versions WHERE project_id = ?",
+        [.text(projectID)]
+      )
+      try execute(
+        database,
+        "UPDATE projects SET current_version = ?, updated_at = ? WHERE id = ?",
+        [.integer(Int64(latest)), .text(utcNow()), .text(projectID)]
+      )
+    }
+  }
+
   public func versionSections(projectID: String, number: Int) throws -> [PromptSection] {
     try withConnection { database in
       let count = try scalarInt(

@@ -125,6 +125,22 @@ final class PromptIterationCoreTests: XCTestCase {
     )
   }
 
+  func testVersionCanBeDeletedAndCurrentVersionFallsBack() throws {
+    let context = try TestContext()
+    defer { context.cleanup() }
+    let workspace = try context.repository.loadOrCreateWorkspace()
+
+    _ = try context.repository.saveVersion(workspace: workspace, note: "v1")
+    _ = try context.repository.saveVersion(workspace: workspace, note: "v2")
+    try context.repository.deleteVersion(projectID: workspace.id, number: 2)
+
+    XCTAssertEqual(try context.repository.listVersions(projectID: workspace.id).map(\.number), [1])
+    XCTAssertEqual(try context.repository.loadOrCreateWorkspace().currentVersion, 1)
+    XCTAssertThrowsError(
+      try context.repository.versionSections(projectID: workspace.id, number: 2)
+    )
+  }
+
   func testRestoreVersionCreatesEditableDraftWithoutChangingHistory() throws {
     let context = try TestContext()
     defer { context.cleanup() }
