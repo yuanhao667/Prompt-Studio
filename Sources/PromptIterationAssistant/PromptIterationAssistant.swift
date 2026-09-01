@@ -16,12 +16,26 @@ struct PromptIterationAssistantApp: App {
   }
 }
 
+private struct WorkspaceItem: Identifiable {
+  let url: URL
+  let children: [WorkspaceItem]?
+
+  var id: String { url.standardizedFileURL.path }
+  var isDirectory: Bool { children != nil }
+}
+
 struct AppRootView: View {
   @State private var model: AppModel?
   @State private var launchSettingsModel: AppModel?
   @State private var folderURL: URL?
   @State private var markdownFiles: [URL] = []
+  @State private var workspaceItems: [WorkspaceItem] = []
   @State private var launcherError: String?
+  @State private var workspacePage: WorkspacePage = .editor
+  @State private var showsSidebar = true
+  @State private var pendingRenameURL: URL?
+  @State private var renameText = ""
+  @State private var pendingDocumentDeletion: URL?
 
   var body: some View {
     Group {
@@ -40,22 +54,28 @@ struct AppRootView: View {
           DeepSeekSettingsView(model: launchSettingsModel)
         }
       } else if let folderURL {
-        HSplitView {
-          folderSidebar(folderURL)
-            .frame(minWidth: 210, idealWidth: 230, maxWidth: 270)
-          if let model {
-            ContentView(model: model)
-          } else {
-            VStack(spacing: 12) {
-              Image(systemName: "doc.badge.plus")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-              Text("这个文件夹里还没有 Markdown Prompt")
-                .font(.headline)
-              Button("新建 Prompt") { createPrompt(in: folderURL) }
-                .buttonStyle(.borderedProminent)
+        VStack(spacing: 0) {
+          workspaceNavigation
+          Divider()
+          HSplitView {
+            if showsSidebar {
+              folderSidebar(folderURL)
+                .frame(minWidth: 210, idealWidth: 230, maxWidth: 320)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let model {
+              ContentView(model: model, page: $workspacePage)
+            } else {
+              VStack(spacing: 12) {
+                Image(systemName: "doc.badge.plus")
+                  .font(.system(size: 40))
+                  .foregroundStyle(.secondary)
+                Text("这个文件夹里还没有 Markdown Prompt")
+                  .font(.headline)
+                Button("新建 Prompt") { createPrompt(in: folderURL) }
+                  .buttonStyle(.borderedProminent)
+              }
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
           }
         }
       } else {
@@ -73,6 +93,73 @@ struct AppRootView: View {
     } message: {
       Text(launcherError ?? "")
     }
+    .alert(
+      "重命名文档",
+      isPresented: Binding(
+        get: { pendingRenameURL != nil },
+        set: { if !$0 { pendingRenameURL = nil } }
+      )
+    ) {
+      TextField("文档名称", text: $renameText)
+      Button("重命名") {
+        if let pendingRenameURL { renameDocument(pendingRenameURL, to: renameText) }
+        pendingRenameURL = nil
+      }
+      Button("取消", role: .cancel) { pendingRenameURL = nil }
+    } message: {
+      Text("文件会继续保存为 Markdown 格式。")
+    }
+    .confirmationDialog(
+      "将“\(pendingDocumentDeletion?.deletingPathExtension().lastPathComponent ?? "")”移到废纸篓？",
+      isPresented: Binding(
+        get: { pendingDocumentDeletion != nil },
+        set: { if !$0 { pendingDocumentDeletion = nil } }
+      )
+    ) {
+      Button("移到废纸篓", role: .destructive) {
+        if let pendingDocumentDeletion { trashDocument(pendingDocumentDeletion) }
+        pendingDocumentDeletion = nil
+      }
+      Button("取消", role: .cancel) { pendingDocumentDeletion = nil }
+    }
+  }
+
+  private var workspaceNavigation: some View {
+    HStack(spacing: 12) {
+      Button { showsSidebar.toggle() } label: {
+        Image(systemName: "sidebar.leading")
+          .frame(width: 28, height: 28)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help(showsSidebar ? "收起文件列表" : "展开文件列表")
+
+      Spacer()
+      HStack(spacing: 4) {
+        ForEach(WorkspacePage.allCases) { item in
+          Button { workspacePage = item } label: {
+            Label(item.rawValue, systemImage: item.systemImage)
+              .frame(minWidth: 96)
+              .padding(.horizontal, 10)
+              .padding(.vertical, 7)
+              .foregroundStyle(workspacePage == item ? Color.white : Color.primary)
+              .background(
+                workspacePage == item ? Color.accentColor : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7)
+              )
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .padding(3)
+      .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
+      Spacer()
+
+      Color.clear.frame(width: 28, height: 28)
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 8)
   }
 
   private var launchPage: some View {
@@ -155,6 +242,8 @@ struct AppRootView: View {
           model = nil
           self.folderURL = nil
           markdownFiles = []
+          workspaceItems = []
+          workspacePage = .editor
         } label: {
           Image(systemName: "chevron.left")
         }
@@ -175,26 +264,8 @@ struct AppRootView: View {
       Divider()
 
       ScrollView {
-        LazyVStack(spacing: 4) {
-          ForEach(markdownFiles, id: \.path) { file in
-            Button { openDocument(file) } label: {
-              HStack(spacing: 8) {
-                Image(systemName: "doc.text")
-                Text(file.deletingPathExtension().lastPathComponent)
-                  .lineLimit(1)
-                Spacer()
-              }
-              .padding(.horizontal, 10)
-              .padding(.vertical, 8)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .background(
-                model?.documentURL?.standardizedFileURL == file.standardizedFileURL
-                  ? Color.blue.opacity(0.12) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7)
-              )
-            }
-            .buttonStyle(.plain)
-          }
+        OutlineGroup(workspaceItems, children: \.children) { item in
+          workspaceItemRow(item)
         }
         .padding(8)
       }
@@ -208,10 +279,69 @@ struct AppRootView: View {
     .background(Color(nsColor: .controlBackgroundColor))
   }
 
+  @ViewBuilder
+  private func workspaceItemRow(_ item: WorkspaceItem) -> some View {
+    if item.isDirectory {
+      Label(item.url.lastPathComponent, systemImage: "folder")
+        .lineLimit(1)
+        .padding(.vertical, 6)
+    } else {
+      HStack(spacing: 4) {
+        Button { openDocument(item.url) } label: {
+          HStack(spacing: 8) {
+            Image(systemName: "doc.text")
+            Text(item.url.deletingPathExtension().lastPathComponent)
+              .lineLimit(1)
+            Spacer()
+          }
+          .padding(.leading, 8)
+          .padding(.vertical, 7)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+
+        Menu {
+          Button("重命名", systemImage: "pencil") { beginRenaming(item.url) }
+          Button("在 Finder 中显示", systemImage: "folder") {
+            NSWorkspace.shared.activateFileViewerSelecting([item.url])
+          }
+          Divider()
+          Button("移到废纸篓", systemImage: "trash", role: .destructive) {
+            pendingDocumentDeletion = item.url
+          }
+        } label: {
+          Image(systemName: "ellipsis")
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+      }
+      .padding(.horizontal, 2)
+      .frame(maxWidth: .infinity)
+      .background(
+        model?.documentURL?.standardizedFileURL == item.url.standardizedFileURL
+          ? Color.blue.opacity(0.14) : Color.clear,
+        in: RoundedRectangle(cornerRadius: 7)
+      )
+      .contextMenu {
+        Button("重命名") { beginRenaming(item.url) }
+        Button("在 Finder 中显示") {
+          NSWorkspace.shared.activateFileViewerSelecting([item.url])
+        }
+        Divider()
+        Button("移到废纸篓", role: .destructive) {
+          pendingDocumentDeletion = item.url
+        }
+      }
+    }
+  }
+
   private func createStandalonePrompt() {
     let panel = NSSavePanel()
     panel.title = "新建 Prompt"
-    panel.nameFieldStringValue = "未命名 Prompt.md"
+    panel.nameFieldStringValue = "System Prompt.md"
     panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
     panel.canCreateDirectories = true
     guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -250,7 +380,7 @@ struct AppRootView: View {
     let panel = NSSavePanel()
     panel.title = "在文件夹中新建 Prompt"
     panel.directoryURL = folderURL
-    panel.nameFieldStringValue = "未命名 Prompt.md"
+    panel.nameFieldStringValue = "System Prompt.md"
     panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
     panel.canCreateDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -282,18 +412,111 @@ struct AppRootView: View {
     model = AppModel(documentURL: url)
   }
 
-  private func refreshFiles(in folderURL: URL) {
+  private func beginRenaming(_ url: URL) {
+    renameText = url.deletingPathExtension().lastPathComponent
+    pendingRenameURL = url
+  }
+
+  private func renameDocument(_ url: URL, to enteredName: String) {
+    let trimmed = enteredName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let name = trimmed.lowercased().hasSuffix(".md")
+      ? String(trimmed.dropLast(3)) : trimmed
+    guard !name.isEmpty,
+      name != ".",
+      name != "..",
+      !name.contains("/")
+    else {
+      launcherError = "请输入有效的文档名称"
+      return
+    }
+
+    let destination = url.deletingLastPathComponent().appendingPathComponent("\(name).md")
+    guard destination.standardizedFileURL != url.standardizedFileURL else { return }
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      launcherError = "同名文档已经存在"
+      return
+    }
+
+    let wasSelected = model?.documentURL?.standardizedFileURL == url.standardizedFileURL
+    if wasSelected { model = nil }
     do {
-      markdownFiles = try FileManager.default.contentsOfDirectory(
-        at: folderURL,
-        includingPropertiesForKeys: nil,
-        options: [.skipsHiddenFiles]
-      )
-      .filter { $0.pathExtension.lowercased() == "md" }
-      .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+      try FileManager.default.moveItem(at: url, to: destination)
+      do {
+        try moveHistoryDatabase(from: url, to: destination)
+      } catch {
+        try? FileManager.default.moveItem(at: destination, to: url)
+        throw error
+      }
+      if let folderURL { refreshFiles(in: folderURL) }
+      if wasSelected { openDocument(destination) }
     } catch {
       launcherError = error.localizedDescription
+      if let folderURL { refreshFiles(in: folderURL) }
+      if wasSelected, FileManager.default.fileExists(atPath: url.path) { openDocument(url) }
+    }
+  }
+
+  private func trashDocument(_ url: URL) {
+    let wasSelected = model?.documentURL?.standardizedFileURL == url.standardizedFileURL
+    if wasSelected { model = nil }
+    do {
+      try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+      if let folderURL {
+        refreshFiles(in: folderURL)
+        if wasSelected, let next = markdownFiles.first { openDocument(next) }
+      }
+    } catch {
+      launcherError = error.localizedDescription
+      if wasSelected { openDocument(url) }
+    }
+  }
+
+  private func moveHistoryDatabase(from sourceDocument: URL, to destinationDocument: URL) throws {
+    let source = AppModel.databaseURL(for: sourceDocument)
+    let destination = AppModel.databaseURL(for: destinationDocument)
+    guard source != destination, FileManager.default.fileExists(atPath: source.path) else { return }
+    try FileManager.default.createDirectory(
+      at: destination.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.moveItem(at: source, to: destination)
+  }
+
+  private func refreshFiles(in folderURL: URL) {
+    do {
+      workspaceItems = try loadWorkspaceItems(in: folderURL)
+      markdownFiles = flattenedMarkdownFiles(in: workspaceItems)
+    } catch {
+      launcherError = error.localizedDescription
+      workspaceItems = []
       markdownFiles = []
+    }
+  }
+
+  private func loadWorkspaceItems(in folderURL: URL) throws -> [WorkspaceItem] {
+    try FileManager.default.contentsOfDirectory(
+      at: folderURL,
+      includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+      options: [.skipsHiddenFiles, .skipsPackageDescendants]
+    )
+    .compactMap { url in
+      let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+      if values.isDirectory == true, values.isSymbolicLink != true {
+        return WorkspaceItem(url: url, children: try loadWorkspaceItems(in: url))
+      }
+      return url.pathExtension.lowercased() == "md"
+        ? WorkspaceItem(url: url, children: nil) : nil
+    }
+    .sorted {
+      if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+      return $0.url.lastPathComponent.localizedCaseInsensitiveCompare($1.url.lastPathComponent)
+        == .orderedAscending
+    }
+  }
+
+  private func flattenedMarkdownFiles(in items: [WorkspaceItem]) -> [URL] {
+    items.flatMap { item in
+      item.children.map(flattenedMarkdownFiles(in:)) ?? [item.url]
     }
   }
 
@@ -304,10 +527,10 @@ struct AppRootView: View {
 
   private func uniquePromptURL(in folderURL: URL) -> URL {
     var number = 1
-    var url = folderURL.appendingPathComponent("未命名 Prompt.md")
+    var url = folderURL.appendingPathComponent("System Prompt.md")
     while FileManager.default.fileExists(atPath: url.path) {
       number += 1
-      url = folderURL.appendingPathComponent("未命名 Prompt \(number).md")
+      url = folderURL.appendingPathComponent("System Prompt \(number).md")
     }
     return url
   }
@@ -339,7 +562,7 @@ final class AppModel: ObservableObject {
 
   init(documentURL: URL? = nil) {
     self.documentURL = documentURL?.standardizedFileURL
-    databaseURL = Self.databaseURLFromArguments(documentURL: documentURL)
+    databaseURL = Self.databaseURL(for: documentURL)
     do {
       let repository = try WorkspaceRepository(databaseURL: databaseURL)
       self.repository = repository
@@ -413,17 +636,6 @@ final class AppModel: ObservableObject {
     deepSeekModel = model
     deepSeekConnectionSucceeded = nil
     deepSeekConnectionMessage = "已切换模型，请保存或测试连接"
-  }
-
-  func updateName(_ name: String) {
-    guard var workspace else { return }
-    workspace.name = name
-    self.workspace = workspace
-    if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      status = "Prompt 名称不能为空；输入有效名称后会自动保存"
-    } else {
-      persistDraft(markChanged: false)
-    }
   }
 
   func updateTitle(sectionID: String, title: String) {
@@ -942,7 +1154,7 @@ final class AppModel: ObservableObject {
     }
   }
 
-  private static func databaseURLFromArguments(documentURL: URL?) -> URL {
+  static func databaseURL(for documentURL: URL?) -> URL {
     let arguments = ProcessInfo.processInfo.arguments
     if let index = arguments.firstIndex(of: "--db"), arguments.indices.contains(index + 1) {
       return URL(
@@ -1074,12 +1286,20 @@ private enum DeepSeekKeychain {
   }
 }
 
-private enum WorkspacePage: String, CaseIterable, Identifiable {
+enum WorkspacePage: String, CaseIterable, Identifiable {
   case editor = "编辑"
   case history = "历史版本"
   case settings = "设置"
 
   var id: Self { self }
+
+  var systemImage: String {
+    switch self {
+    case .editor: return "square.and.pencil"
+    case .history: return "clock.arrow.circlepath"
+    case .settings: return "gearshape"
+    }
+  }
 }
 
 private struct DeepSeekSettingsView: View {
@@ -1193,17 +1413,15 @@ private struct DeepSeekSettingsView: View {
 
 struct ContentView: View {
   @ObservedObject var model: AppModel
+  @Binding var page: WorkspacePage
   @State private var pendingDeletion: PromptSection?
   @State private var pendingHistoryEdit: VersionSummary?
-  @State private var page: WorkspacePage = .editor
   @State private var versionSearch = ""
   @State private var hoveredSectionID: String?
   @State private var sectionDropTargetID: String?
 
   var body: some View {
     VStack(spacing: 0) {
-      appNavigation
-      Divider()
       if page == .editor {
         editorPage
       } else if page == .history {
@@ -1259,24 +1477,6 @@ struct ContentView: View {
     }
   }
 
-  private var appNavigation: some View {
-    HStack {
-      Label("Prompt 迭代助手", systemImage: "text.document")
-        .font(.headline)
-      Spacer()
-      Picker("页面", selection: $page) {
-        ForEach(WorkspacePage.allCases) { item in
-          Text(item.rawValue).tag(item)
-        }
-      }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .frame(width: 300)
-    }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
-  }
-
   private var settingsPage: some View {
     DeepSeekSettingsView(model: model)
   }
@@ -1312,17 +1512,6 @@ struct ContentView: View {
   private var editorHeader: some View {
     VStack(spacing: 10) {
       HStack(spacing: 12) {
-        TextField(
-          "System Prompt 名称",
-          text: Binding(
-            get: { model.workspace?.name ?? "" },
-            set: model.updateName
-          )
-        )
-        .font(.title2.bold())
-        .textFieldStyle(.plain)
-        .frame(minWidth: 220, maxWidth: 420)
-
         Text(model.versionLabel)
           .foregroundStyle(.secondary)
         Text(model.saveStateLabel)
@@ -1777,7 +1966,7 @@ struct ContentView: View {
       .font(.system(.body, design: .monospaced))
       .scrollContentBackground(.hidden)
       .frame(minHeight: 100)
-      .padding(.leading, isHovered ? 47 : 15)
+      .padding(.leading, isHovered ? 32 : 0)
     }
     .padding(.vertical, 10)
     .opacity(section.isIncluded ? 1 : 0.48)
@@ -1832,7 +2021,7 @@ struct ContentView: View {
         .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
-        .padding(.leading, mirrorsHover ? 52 : 20)
+        .padding(.leading, mirrorsHover ? 32 : 0)
     }
     .padding(.vertical, 10)
     .opacity(isIncluded ? 1 : 0.48)

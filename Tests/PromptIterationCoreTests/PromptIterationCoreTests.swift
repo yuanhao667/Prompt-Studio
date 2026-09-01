@@ -7,6 +7,7 @@ final class PromptIterationCoreTests: XCTestCase {
     defer { context.cleanup() }
     var workspace = try context.repository.loadOrCreateWorkspace()
 
+    XCTAssertEqual(workspace.name, "System Prompt")
     XCTAssertEqual(workspace.sections.count, 12)
     XCTAssertEqual(
       workspace.sections.map(\.title),

@@ -398,11 +398,11 @@ public final class WorkspaceRepository {
       try execute(
         database,
         "INSERT INTO projects(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        [.text(id), .text("未命名 Prompt"), .text(timestamp), .text(timestamp)]
+        [.text(id), .text("System Prompt"), .text(timestamp), .text(timestamp)]
       )
       try insertDraftSections(database, projectID: id, sections: sections)
     }
-    return PromptWorkspace(id: id, name: "未命名 Prompt", currentVersion: 0, sections: sections)
+    return PromptWorkspace(id: id, name: "System Prompt", currentVersion: 0, sections: sections)
   }
 
   public func saveDraft(_ workspace: PromptWorkspace) throws {
