@@ -10,9 +10,9 @@ struct PromptIterationAssistantApp: App {
     WindowGroup {
       AppRootView()
         .frame(minWidth: 1_080, minHeight: 700)
-        .ignoresSafeArea(.container, edges: .top)
     }
     .windowStyle(.hiddenTitleBar)
+    .windowToolbarStyle(.unified)
   }
 }
 
@@ -60,12 +60,12 @@ struct AppRootView: View {
               .frame(minWidth: 180, idealWidth: 200, maxWidth: 260)
           }
           VStack(spacing: 0) {
-            workspaceNavigation
             if let model {
               ContentView(
                 model: model,
                 page: $workspacePage,
-                onRenamePrompt: renamePromptFolder
+                onRenamePrompt: renamePromptFolder,
+                onCloseSettings: { workspacePage = pageBeforeSettings }
               )
             } else {
               VStack(spacing: 12) {
@@ -80,7 +80,6 @@ struct AppRootView: View {
               .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
           }
-          .ignoresSafeArea(.container, edges: .top)
         }
       } else {
         launchPage
@@ -181,24 +180,16 @@ struct AppRootView: View {
     } message: {
       Text("该历史版本会移到废纸篓，当前工作稿不受影响。")
     }
+    .toolbar { workspaceToolbar }
+    .toolbarRole(.editor)
   }
 
-  private var workspaceNavigation: some View {
-    HStack(spacing: 12) {
-      Button { showsSidebar.toggle() } label: {
-        Image(systemName: "sidebar.leading")
-          .font(.system(size: 18, weight: .semibold))
-          .frame(width: 36, height: 36)
-          .background(Color(nsColor: .controlBackgroundColor), in: Circle())
-          .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .help(showsSidebar ? "收起文件列表" : "展开文件列表")
-
-      if workspacePage == .settings {
-        Button { workspacePage = pageBeforeSettings } label: {
-          Image(systemName: "chevron.left")
+  @ToolbarContentBuilder
+  private var workspaceToolbar: some ToolbarContent {
+    ToolbarItemGroup(placement: .navigation) {
+      if folderURL != nil {
+        Button { showsSidebar.toggle() } label: {
+          Image(systemName: "sidebar.leading")
             .font(.system(size: 18, weight: .semibold))
             .frame(width: 36, height: 36)
             .background(Color(nsColor: .controlBackgroundColor), in: Circle())
@@ -206,32 +197,37 @@ struct AppRootView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("返回编辑页")
-      }
+        .help(showsSidebar ? "收起文件列表" : "展开文件列表")
 
-      Spacer()
-      Button {
-        if workspacePage == .settings {
-          workspacePage = pageBeforeSettings
-        } else {
-          pageBeforeSettings = workspacePage
-          workspacePage = .settings
-        }
-      } label: {
-        Image(systemName: "gearshape")
-          .font(.system(size: 18, weight: .semibold))
-          .frame(width: 36, height: 36)
-          .background(Color(nsColor: .controlBackgroundColor), in: Circle())
-          .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
-          .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
-      .help(workspacePage == .settings ? "关闭设置" : "设置")
     }
-    .padding(.leading, showsSidebar ? 10 : 94)
-    .padding(.trailing, 10)
-    .frame(height: 36)
-    .padding(.top, 6)
+
+    ToolbarItem(placement: .principal) {
+      Spacer()
+        .frame(maxWidth: .infinity)
+    }
+
+    ToolbarItem(placement: .confirmationAction) {
+      if folderURL != nil {
+        Button {
+          if workspacePage == .settings {
+            workspacePage = pageBeforeSettings
+          } else {
+            pageBeforeSettings = workspacePage
+            workspacePage = .settings
+          }
+        } label: {
+          Image(systemName: "gearshape")
+            .font(.system(size: 18, weight: .semibold))
+            .frame(width: 36, height: 36)
+            .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+            .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(workspacePage == .settings ? "关闭设置" : "设置")
+      }
+    }
   }
 
   private var launchPage: some View {
@@ -1830,17 +1826,31 @@ enum WorkspacePage {
 
 private struct DeepSeekSettingsView: View {
   @ObservedObject var model: AppModel
+  let onBack: () -> Void
   @State private var revealsAPIKey = false
   @State private var showsSaveToast = false
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        VStack(alignment: .leading, spacing: 6) {
-          Text("DeepSeek")
-            .font(.title2.bold())
-          Text("配置 API 后，即可在编辑页直接生成 Prompt。")
-            .foregroundStyle(.secondary)
+        HStack(spacing: 14) {
+          Button(action: onBack) {
+            Image(systemName: "chevron.left")
+              .font(.system(size: 18, weight: .semibold))
+              .frame(width: 36, height: 36)
+              .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+              .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("返回编辑页")
+
+          VStack(alignment: .leading, spacing: 6) {
+            Text("DeepSeek")
+              .font(.title2.bold())
+            Text("配置 API 后，即可在编辑页直接生成 Prompt。")
+              .foregroundStyle(.secondary)
+          }
         }
         .padding(.bottom, 20)
 
@@ -1976,6 +1986,7 @@ struct ContentView: View {
   @ObservedObject var model: AppModel
   @Binding var page: WorkspacePage
   let onRenamePrompt: (String) -> Void
+  let onCloseSettings: () -> Void
   @State private var pendingDeletion: PromptSection?
   @State private var promptName = ""
   @State private var hoveredSectionID: String?
@@ -2047,7 +2058,7 @@ struct ContentView: View {
   }
 
   private var settingsPage: some View {
-    DeepSeekSettingsView(model: model)
+    DeepSeekSettingsView(model: model, onBack: onCloseSettings)
   }
 
   @ViewBuilder
