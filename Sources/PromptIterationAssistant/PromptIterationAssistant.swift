@@ -54,14 +54,14 @@ struct AppRootView: View {
           DeepSeekSettingsView(model: launchSettingsModel)
         }
       } else if let folderURL {
-        VStack(spacing: 0) {
-          workspaceNavigation
-          Divider()
-          HSplitView {
-            if showsSidebar {
-              folderSidebar(folderURL)
-                .frame(minWidth: 210, idealWidth: 230, maxWidth: 320)
-            }
+        HSplitView {
+          if showsSidebar {
+            folderSidebar(folderURL)
+              .frame(minWidth: 210, idealWidth: 230, maxWidth: 320)
+          }
+          VStack(spacing: 0) {
+            workspaceNavigation
+            Divider()
             if let model {
               ContentView(model: model, page: $workspacePage)
             } else {
