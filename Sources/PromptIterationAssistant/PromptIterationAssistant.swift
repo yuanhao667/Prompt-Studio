@@ -38,10 +38,10 @@ private struct WorkspaceItem: Identifiable {
 struct AppRootView: View {
   private static let workspaceMarkerName = ".prompt-iteration-folder"
   @State private var model: AppModel?
-  @State private var launchSettingsModel: AppModel?
   @State private var folderURL: URL?
   @State private var markdownFiles: [URL] = []
   @State private var workspaceItems: [WorkspaceItem] = []
+  @State private var expandedFolderIDs: Set<String> = []
   @State private var launcherError: String?
   @State private var workspacePage: WorkspacePage = .editor
   @State private var showsSidebar = true
@@ -51,23 +51,7 @@ struct AppRootView: View {
 
   var body: some View {
     Group {
-      if let launchSettingsModel {
-        VStack(spacing: 0) {
-          HStack {
-            Button {
-              self.launchSettingsModel = nil
-            } label: {
-              Label("返回启动页", systemImage: "chevron.left")
-            }
-            Spacer()
-          }
-          .padding(.leading, 82)
-          .padding(.trailing, 14)
-          .padding(.vertical, 14)
-          Divider()
-          DeepSeekSettingsView(model: launchSettingsModel)
-        }
-      } else if let folderURL {
+      if let folderURL {
         HSplitView {
           if showsSidebar {
             folderSidebar(folderURL)
@@ -183,41 +167,32 @@ struct AppRootView: View {
   }
 
   private var launchPage: some View {
-    ZStack(alignment: .topTrailing) {
-      VStack(spacing: 30) {
-        VStack(spacing: 8) {
-          Image(systemName: "text.document")
-            .font(.system(size: 46))
-            .foregroundStyle(.blue)
-          Text("Prompt 迭代助手")
-            .font(.largeTitle.bold())
-          Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
-            .foregroundStyle(.secondary)
-        }
-
-        HStack(spacing: 14) {
-          launchAction(
-            "新建 Prompt",
-            detail: "创建 Prompt 文件夹和 System Prompt.md",
-            systemImage: "folder.badge.plus",
-            action: createFolder
-          )
-          launchAction(
-            "打开文件夹",
-            detail: "读取文件夹内已有的 .md 文件",
-            systemImage: "folder",
-            action: openFolder
-          )
-        }
-        .frame(maxWidth: 800)
+    VStack(spacing: 30) {
+      VStack(spacing: 8) {
+        Image(systemName: "text.document")
+          .font(.system(size: 46))
+          .foregroundStyle(.blue)
+        Text("Prompt 迭代助手")
+          .font(.largeTitle.bold())
+        Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
+          .foregroundStyle(.secondary)
       }
 
-      Button {
-        launchSettingsModel = AppModel()
-      } label: {
-        Label("设置", systemImage: "gearshape")
+      HStack(spacing: 14) {
+        launchAction(
+          "新建 Prompt",
+          detail: "创建 Prompt 文件夹和 System Prompt.md",
+          systemImage: "folder.badge.plus",
+          action: createFolder
+        )
+        launchAction(
+          "打开文件夹",
+          detail: "读取文件夹内已有的 .md 文件",
+          systemImage: "folder",
+          action: openFolder
+        )
       }
-      .padding(24)
+      .frame(maxWidth: 800)
     }
     .padding(40)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -271,8 +246,42 @@ struct AppRootView: View {
       Divider()
 
       ScrollView {
-        OutlineGroup(workspaceItems, children: \.children) { item in
-          workspaceItemRow(item)
+        LazyVStack(spacing: 2) {
+          ForEach(workspaceItems) { folder in
+            VStack(spacing: 2) {
+              Button {
+                if expandedFolderIDs.contains(folder.id) {
+                  expandedFolderIDs.remove(folder.id)
+                } else {
+                  expandedFolderIDs.insert(folder.id)
+                }
+              } label: {
+                HStack(spacing: 8) {
+                  Image(
+                    systemName: expandedFolderIDs.contains(folder.id)
+                      ? "chevron.down" : "chevron.right"
+                  )
+                  .font(.caption.bold())
+                  .frame(width: 12)
+                  Image(systemName: "folder")
+                  Text(folder.url.lastPathComponent)
+                    .lineLimit(1)
+                  Spacer()
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+
+              if expandedFolderIDs.contains(folder.id) {
+                ForEach(folder.children ?? []) { child in
+                  workspaceItemRow(child)
+                    .padding(.leading, 22)
+                }
+              }
+            }
+          }
         }
         .padding(8)
       }
@@ -453,6 +462,7 @@ struct AppRootView: View {
   }
 
   private func openDocument(_ url: URL) {
+    expandedFolderIDs.insert(url.deletingLastPathComponent().standardizedFileURL.path)
     model = AppModel(documentURL: url)
     if let folderURL { refreshFiles(in: folderURL) }
   }
@@ -2228,12 +2238,6 @@ struct ContentView: View {
 
   private var footer: some View {
     HStack {
-      Label(
-        model.autosaveStatus,
-        systemImage: model.autosaveStatus == "已自动保存"
-          ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-      )
-      .foregroundStyle(model.autosaveStatus == "已自动保存" ? Color.green : Color.orange)
       Spacer()
       Text("Markdown 文件：\(model.documentURL?.path ?? "尚未选择")")
     }
