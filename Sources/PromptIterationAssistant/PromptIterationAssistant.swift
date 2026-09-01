@@ -1,7 +1,6 @@
 import AppKit
 import CryptoKit
 import PromptIterationCore
-import Security
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -133,9 +132,11 @@ struct AppRootView: View {
         set: { if !$0 { pendingDocumentDeletion = nil } }
       )
     ) {
-      Button("移到废纸篓", role: .destructive) {
-        if let pendingDocumentDeletion { trashItem(pendingDocumentDeletion) }
-        pendingDocumentDeletion = nil
+      if let deletionURL = pendingDocumentDeletion {
+        Button("移到废纸篓", role: .destructive) {
+          pendingDocumentDeletion = nil
+          trashItem(deletionURL)
+        }
       }
       Button("取消", role: .cancel) { pendingDocumentDeletion = nil }
     }
@@ -230,7 +231,7 @@ struct AppRootView: View {
     .padding(.leading, showsSidebar ? 10 : 94)
     .padding(.trailing, 10)
     .frame(height: 36)
-    .padding(.top, 10)
+    .padding(.top, 6)
   }
 
   private var launchPage: some View {
@@ -1025,14 +1026,9 @@ final class AppModel: ObservableObject {
     deepSeekModel = storedModel.flatMap {
       Self.supportedDeepSeekModels.contains($0) ? $0 : nil
     } ?? "deepseek-v4-flash"
-    do {
-      deepSeekAPIKey = try DeepSeekKeychain.load() ?? ""
-      if !deepSeekAPIKey.isEmpty {
-        deepSeekConnectionMessage = "已读取本机配置，尚未测试"
-      }
-    } catch {
-      deepSeekConnectionSucceeded = false
-      deepSeekConnectionMessage = "无法读取 Keychain：\(error.localizedDescription)"
+    deepSeekAPIKey = UserDefaults.standard.string(forKey: "deepseek.apiKey") ?? ""
+    if !deepSeekAPIKey.isEmpty {
+      deepSeekConnectionMessage = "已读取本地配置，尚未测试"
     }
   }
 
@@ -1367,25 +1363,18 @@ final class AppModel: ObservableObject {
       return false
     }
 
-    do {
-      try DeepSeekKeychain.save(apiKey)
-      UserDefaults.standard.set(baseURL, forKey: "deepseek.baseURL")
-      UserDefaults.standard.set(model, forKey: "deepseek.model")
-      deepSeekAPIKey = apiKey
-      deepSeekBaseURL = baseURL
-      deepSeekModel = model
-      if deepSeekConnectionSucceeded != true || testedDeepSeekSettings != settings {
-        deepSeekConnectionSucceeded = nil
-        deepSeekConnectionMessage = "配置已保存，尚未测试"
-      }
-      status = "DeepSeek 配置已保存到本机"
-      return true
-    } catch {
-      deepSeekConnectionSucceeded = false
-      deepSeekConnectionMessage = "保存失败：\(error.localizedDescription)"
-      status = deepSeekConnectionMessage
-      return false
+    UserDefaults.standard.set(apiKey, forKey: "deepseek.apiKey")
+    UserDefaults.standard.set(baseURL, forKey: "deepseek.baseURL")
+    UserDefaults.standard.set(model, forKey: "deepseek.model")
+    deepSeekAPIKey = apiKey
+    deepSeekBaseURL = baseURL
+    deepSeekModel = model
+    if deepSeekConnectionSucceeded != true || testedDeepSeekSettings != settings {
+      deepSeekConnectionSucceeded = nil
+      deepSeekConnectionMessage = "配置已保存，尚未测试"
     }
+    status = "DeepSeek 配置已保存到本软件"
+    return true
   }
 
   func testDeepSeekConnection() {
@@ -1765,58 +1754,6 @@ private struct DeepSeekGeneratedPrompt: Decodable {
   let sections: [Section]
 }
 
-private enum DeepSeekKeychain {
-  private static let service = "com.promptiterationassistant.app"
-  private static let account = "deepseek-api-key"
-
-  static func load() throws -> String? {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecAttrAccount as String: account,
-      kSecReturnData as String: true,
-      kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
-    var item: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &item)
-    if status == errSecItemNotFound { return nil }
-    guard status == errSecSuccess else { throw KeychainError(status: status) }
-    guard let data = item as? Data, let value = String(data: data, encoding: .utf8) else {
-      throw KeychainError(status: errSecDecode)
-    }
-    return value
-  }
-
-  static func save(_ value: String) throws {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecAttrAccount as String: account,
-    ]
-    let data = Data(value.utf8)
-    let updateStatus = SecItemUpdate(
-      query as CFDictionary,
-      [kSecValueData as String: data] as CFDictionary
-    )
-    if updateStatus == errSecSuccess { return }
-    guard updateStatus == errSecItemNotFound else { throw KeychainError(status: updateStatus) }
-
-    var item = query
-    item[kSecValueData as String] = data
-    item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-    let addStatus = SecItemAdd(item as CFDictionary, nil)
-    guard addStatus == errSecSuccess else { throw KeychainError(status: addStatus) }
-  }
-
-  private struct KeychainError: LocalizedError {
-    let status: OSStatus
-
-    var errorDescription: String? {
-      SecCopyErrorMessageString(status, nil) as String? ?? "Keychain 错误 \(status)"
-    }
-  }
-}
-
 enum WorkspacePage {
   case editor
   case history
@@ -1842,7 +1779,7 @@ private struct DeepSeekSettingsView: View {
           GridRow {
             VStack(alignment: .leading, spacing: 3) {
               Text("API Key")
-              Text("仅保存在本机 Keychain")
+              Text("保存在本软件的本地设置中")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
