@@ -2004,6 +2004,7 @@ struct ContentView: View {
   @State private var pendingDeletion: PromptSection?
   @State private var promptName = ""
   @State private var hoveredSectionID: String?
+  @State private var hoveredModuleAction: String?
   @State private var sectionDropTargetID: String?
   @State private var isPreviewingPrompt = false
   @State private var isPreviewingComparison = false
@@ -2188,9 +2189,10 @@ struct ContentView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
                 }
-                .padding(.vertical, 10)
+                .padding(.top, 6)
+                .padding(.bottom, 14)
                 if section.id != model.selectedHistorySections.last?.id {
                   Divider().padding(.vertical, 6)
                 }
@@ -2479,24 +2481,28 @@ struct ContentView: View {
         .font(.headline)
         .textFieldStyle(.plain)
         HStack(spacing: 6) {
-          Button {
+          moduleActionButton(
+            id: "\(section.id)-clear",
+            title: "清空",
+            systemImage: "eraser"
+          ) {
+            model.updateContent(sectionID: section.id, content: "")
+          }
+          moduleActionButton(
+            id: "\(section.id)-visibility",
+            title: section.isIncluded ? "隐藏" : "显示",
+            systemImage: section.isIncluded ? "eye" : "eye.slash"
+          ) {
             model.toggleSectionInclusion(section.id)
-          } label: {
-            Image(systemName: section.isIncluded ? "eye" : "eye.slash")
-              .frame(width: 30, height: 30)
-              .contentShape(Rectangle())
           }
-          .buttonStyle(.plain)
-          .help(section.isIncluded ? "从复制中隐藏" : "加入复制")
-          Button(role: .destructive) {
+          moduleActionButton(
+            id: "\(section.id)-delete",
+            title: "删除模块",
+            systemImage: "trash",
+            role: .destructive
+          ) {
             pendingDeletion = section
-          } label: {
-            Image(systemName: "trash")
-              .frame(width: 30, height: 30)
-              .contentShape(Rectangle())
           }
-          .buttonStyle(.plain)
-          .help("删除维度")
         }
         .padding(.leading, 8)
       }
@@ -2518,9 +2524,10 @@ struct ContentView: View {
       )
       .font(.system(.body, design: .monospaced))
       .scrollContentBackground(.hidden)
-      .frame(minHeight: 100)
+      .frame(minHeight: 80)
     }
-    .padding(.vertical, 10)
+    .padding(.top, 6)
+    .padding(.bottom, 14)
     .opacity(section.isIncluded ? 1 : 0.48)
     .animation(.easeOut(duration: 0.14), value: isHovered)
     .overlay(alignment: .top) {
@@ -2544,6 +2551,42 @@ struct ContentView: View {
         sectionDropTargetID = nil
       }
     }
+  }
+
+  private func moduleActionButton(
+    id: String,
+    title: String,
+    systemImage: String,
+    role: ButtonRole? = nil,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(role: role, action: action) {
+      Image(systemName: systemImage)
+        .frame(width: 30, height: 30)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .overlay(alignment: .top) {
+      if hoveredModuleAction == id {
+        Text(title)
+          .font(.caption2)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(.regularMaterial, in: Capsule())
+          .overlay(Capsule().stroke(.separator))
+          .fixedSize()
+          .offset(y: -28)
+          .allowsHitTesting(false)
+      }
+    }
+    .onHover { hovering in
+      if hovering {
+        hoveredModuleAction = id
+      } else if hoveredModuleAction == id {
+        hoveredModuleAction = nil
+      }
+    }
+    .help(title)
   }
 
   private func comparisonSectionEditor(_ section: ComparisonSection) -> some View {
@@ -2575,16 +2618,17 @@ struct ContentView: View {
           ProgressView().controlSize(.small)
           Text("正在生成…").foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
       } else {
         Text(section.content.isEmpty ? "该栏目无内容" : section.content)
           .font(.system(.body, design: .monospaced))
           .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
           .textSelection(.enabled)
-          .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+          .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
       }
     }
-    .padding(.vertical, 10)
+    .padding(.top, 6)
+    .padding(.bottom, 14)
     .opacity(isIncluded ? 1 : 0.48)
     .overlay(alignment: .top) {
       if sectionDropTargetID == section.sectionID {
