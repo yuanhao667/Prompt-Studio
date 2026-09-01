@@ -1,5 +1,7 @@
 .build/
 .DerivedData/
+.DistributionBuild/
+dist/*.dmg
 xcuserdata/
 .vefaas/
 .swiftpm/

@@ -24,7 +24,13 @@
 - 设置页可点击切换 DeepSeek V4 Flash / V4 Pro，并分别验证所选模型是否可用。
 - API Key、接口地址和模型只保存在当前 Mac 的应用偏好设置中，不写入 Prompt 文件或 App 包。
 
-当前阶段以功能跑通为目标，不包含正式视觉设计、上线部署和 DMG 分发。
+当前 DMG 用于 Apple Silicon Mac 内测，尚未使用 Apple Developer ID 签名或提交 Apple 公证。
+
+## 安装内测版
+
+打开 `dist/Prompt Studio.dmg`，将 `Prompt Studio` 拖入“应用程序”。首次启动若被 macOS 拦截，先尝试打开一次，再前往“系统设置 → 隐私与安全性”点击“仍要打开”。
+
+当前安装包仅支持 Apple Silicon，要求 macOS 13 或更高版本。
 
 ## 用 Xcode 开发
 
