@@ -290,14 +290,14 @@ struct AppRootView: View {
         Spacer()
         Button { createPromptFolder(in: folderURL) } label: {
           Image(systemName: "plus")
-            .frame(width: 30, height: 30)
+            .frame(width: 28, height: 28)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("新建 Prompt 文件夹")
       }
       .padding(.leading, 12)
-      .padding(.trailing, 12)
+      .padding(.trailing, 8)
       .padding(.vertical, 12)
       Divider()
 
