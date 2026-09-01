@@ -2068,13 +2068,13 @@ struct ContentView: View {
           }
           Spacer()
           Button { isPreviewingPrompt.toggle() } label: {
-            Text(isPreviewingPrompt ? "退出预览" : "预览")
+            Text(isPreviewingPrompt ? "编辑" : "预览")
               .frame(height: 28)
               .padding(.horizontal, 6)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .help(isPreviewingPrompt ? "退出预览" : "预览完整 Prompt")
+          .help(isPreviewingPrompt ? "返回编辑" : "预览完整 Prompt")
 
           Button {
             if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
