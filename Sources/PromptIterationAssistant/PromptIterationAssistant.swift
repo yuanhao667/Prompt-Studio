@@ -2006,6 +2006,7 @@ struct ContentView: View {
   @State private var hoveredSectionID: String?
   @State private var sectionDropTargetID: String?
   @State private var isPreviewingPrompt = false
+  @State private var isPreviewingComparison = false
 
   private var promptNameFieldWidth: CGFloat {
     let displayedName = promptName.isEmpty ? "Prompt 名称" : promptName
@@ -2066,7 +2067,10 @@ struct ContentView: View {
       }
     }
     .animation(.easeInOut(duration: 0.18), value: model.copyFeedback)
-    .onChange(of: model.documentURL) { _ in isPreviewingPrompt = false }
+    .onChange(of: model.documentURL) { _ in
+      isPreviewingPrompt = false
+      isPreviewingComparison = false
+    }
   }
 
   private var settingsPage: some View {
@@ -2361,6 +2365,16 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .help("关闭对比版本")
             Spacer()
+            if comparison.kind == .manual {
+              Button { isPreviewingComparison.toggle() } label: {
+                Text(isPreviewingComparison ? "编辑" : "预览")
+                  .frame(height: 28)
+                  .padding(.horizontal, 6)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .help(isPreviewingComparison ? "返回编辑" : "预览完整 Prompt")
+            }
             Button { model.copyComparisonPrompt() } label: {
               Image(systemName: "doc.on.doc")
                 .frame(width: 28, height: 28)
@@ -2376,7 +2390,7 @@ struct ContentView: View {
 
           Divider()
 
-          if !isPreviewingPrompt {
+          if !isPreviewingComparison {
             ScrollView {
               LazyVStack(spacing: 0) {
                 ForEach(comparison.sections) { section in
