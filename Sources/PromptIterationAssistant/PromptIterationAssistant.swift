@@ -65,8 +65,6 @@ struct AppRootView: View {
                 model: model,
                 page: $workspacePage,
                 onRenamePrompt: renamePromptFolder,
-                isSidebarVisible: showsSidebar,
-                onToggleSidebar: { showsSidebar.toggle() },
                 onCloseSettings: { workspacePage = pageBeforeSettings }
               )
             } else {
@@ -189,7 +187,7 @@ struct AppRootView: View {
   @ToolbarContentBuilder
   private var workspaceToolbar: some ToolbarContent {
     ToolbarItemGroup(placement: .navigation) {
-      if folderURL != nil, workspacePage != .settings {
+      if folderURL != nil {
         Button { showsSidebar.toggle() } label: {
           Image(systemName: "sidebar.leading")
             .font(.system(size: 18, weight: .semibold))
@@ -1828,8 +1826,6 @@ enum WorkspacePage {
 
 private struct DeepSeekSettingsView: View {
   @ObservedObject var model: AppModel
-  let isSidebarVisible: Bool
-  let onToggleSidebar: () -> Void
   let onBack: () -> Void
   @State private var revealsAPIKey = false
   @State private var showsSaveToast = false
@@ -1837,18 +1833,7 @@ private struct DeepSeekSettingsView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 0) {
-        HStack(spacing: 10) {
-          Button(action: onToggleSidebar) {
-            Image(systemName: "sidebar.leading")
-              .font(.system(size: 18, weight: .semibold))
-              .frame(width: 36, height: 36)
-              .background(Color(nsColor: .controlBackgroundColor), in: Circle())
-              .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .help(isSidebarVisible ? "收起文件列表" : "展开文件列表")
-
+        HStack(spacing: 14) {
           Button(action: onBack) {
             Image(systemName: "chevron.left")
               .font(.system(size: 18, weight: .semibold))
@@ -1859,14 +1844,13 @@ private struct DeepSeekSettingsView: View {
           }
           .buttonStyle(.plain)
           .help("返回编辑页")
-        }
-        .padding(.bottom, 22)
 
-        VStack(alignment: .leading, spacing: 6) {
-          Text("DeepSeek")
-            .font(.title2.bold())
-          Text("配置 API 后，即可在编辑页直接生成 Prompt。")
-            .foregroundStyle(.secondary)
+          VStack(alignment: .leading, spacing: 6) {
+            Text("DeepSeek")
+              .font(.title2.bold())
+            Text("配置 API 后，即可在编辑页直接生成 Prompt。")
+              .foregroundStyle(.secondary)
+          }
         }
         .padding(.bottom, 20)
 
@@ -2002,8 +1986,6 @@ struct ContentView: View {
   @ObservedObject var model: AppModel
   @Binding var page: WorkspacePage
   let onRenamePrompt: (String) -> Void
-  let isSidebarVisible: Bool
-  let onToggleSidebar: () -> Void
   let onCloseSettings: () -> Void
   @State private var pendingDeletion: PromptSection?
   @State private var promptName = ""
@@ -2076,12 +2058,7 @@ struct ContentView: View {
   }
 
   private var settingsPage: some View {
-    DeepSeekSettingsView(
-      model: model,
-      isSidebarVisible: isSidebarVisible,
-      onToggleSidebar: onToggleSidebar,
-      onBack: onCloseSettings
-    )
+    DeepSeekSettingsView(model: model, onBack: onCloseSettings)
   }
 
   @ViewBuilder
