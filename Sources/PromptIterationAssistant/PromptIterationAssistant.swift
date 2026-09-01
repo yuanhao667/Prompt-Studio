@@ -18,13 +18,28 @@ struct PromptIterationAssistantApp: App {
 
 struct AppRootView: View {
   @State private var model: AppModel?
+  @State private var launchSettingsModel: AppModel?
   @State private var folderURL: URL?
   @State private var markdownFiles: [URL] = []
   @State private var launcherError: String?
 
   var body: some View {
     Group {
-      if let folderURL {
+      if let launchSettingsModel {
+        VStack(spacing: 0) {
+          HStack {
+            Button {
+              self.launchSettingsModel = nil
+            } label: {
+              Label("返回启动页", systemImage: "chevron.left")
+            }
+            Spacer()
+          }
+          .padding(14)
+          Divider()
+          DeepSeekSettingsView(model: launchSettingsModel)
+        }
+      } else if let folderURL {
         HSplitView {
           folderSidebar(folderURL)
             .frame(minWidth: 210, idealWidth: 230, maxWidth: 270)
@@ -61,38 +76,47 @@ struct AppRootView: View {
   }
 
   private var launchPage: some View {
-    VStack(spacing: 30) {
-      VStack(spacing: 8) {
-        Image(systemName: "text.document")
-          .font(.system(size: 46))
-          .foregroundStyle(.blue)
-        Text("Prompt 迭代助手")
-          .font(.largeTitle.bold())
-        Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
-          .foregroundStyle(.secondary)
+    ZStack(alignment: .topTrailing) {
+      VStack(spacing: 30) {
+        VStack(spacing: 8) {
+          Image(systemName: "text.document")
+            .font(.system(size: 46))
+            .foregroundStyle(.blue)
+          Text("Prompt 迭代助手")
+            .font(.largeTitle.bold())
+          Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
+            .foregroundStyle(.secondary)
+        }
+
+        HStack(spacing: 14) {
+          launchAction(
+            "新建 Prompt",
+            detail: "创建带固定标题模板的 .md 文件",
+            systemImage: "doc.badge.plus",
+            action: createStandalonePrompt
+          )
+          launchAction(
+            "新建文件夹",
+            detail: "创建本地文件夹和第一个 Prompt",
+            systemImage: "folder.badge.plus",
+            action: createFolder
+          )
+          launchAction(
+            "打开文件夹",
+            detail: "读取文件夹内已有的 .md 文件",
+            systemImage: "folder",
+            action: openFolder
+          )
+        }
+        .frame(maxWidth: 800)
       }
 
-      HStack(spacing: 14) {
-        launchAction(
-          "新建 Prompt",
-          detail: "创建带固定标题模板的 .md 文件",
-          systemImage: "doc.badge.plus",
-          action: createStandalonePrompt
-        )
-        launchAction(
-          "新建文件夹",
-          detail: "创建本地文件夹和第一个 Prompt",
-          systemImage: "folder.badge.plus",
-          action: createFolder
-        )
-        launchAction(
-          "打开文件夹",
-          detail: "读取文件夹内已有的 .md 文件",
-          systemImage: "folder",
-          action: openFolder
-        )
+      Button {
+        launchSettingsModel = AppModel()
+      } label: {
+        Label("设置", systemImage: "gearshape")
       }
-      .frame(maxWidth: 800)
+      .padding(24)
     }
     .padding(40)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1031,6 +1055,105 @@ private enum WorkspacePage: String, CaseIterable, Identifiable {
   var id: Self { self }
 }
 
+private struct DeepSeekSettingsView: View {
+  @ObservedObject var model: AppModel
+  @State private var revealsAPIKey = false
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 6) {
+          Text("设置")
+            .font(.largeTitle.bold())
+          Text("配置应用直连 DeepSeek 所需的本地凭证。")
+            .foregroundStyle(.secondary)
+        }
+
+        GroupBox {
+          Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 16) {
+            GridRow {
+              Text("API Key")
+                .frame(width: 90, alignment: .trailing)
+              HStack(spacing: 8) {
+                if revealsAPIKey {
+                  TextField("sk-…", text: $model.deepSeekAPIKey)
+                    .textFieldStyle(.roundedBorder)
+                } else {
+                  SecureField("sk-…", text: $model.deepSeekAPIKey)
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button {
+                  revealsAPIKey.toggle()
+                } label: {
+                  Image(systemName: revealsAPIKey ? "eye.slash" : "eye")
+                    .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help(revealsAPIKey ? "隐藏 API Key" : "显示 API Key")
+              }
+            }
+
+            GridRow {
+              Text("接口地址")
+                .frame(width: 90, alignment: .trailing)
+              TextField("https://api.deepseek.com", text: $model.deepSeekBaseURL)
+                .textFieldStyle(.roundedBorder)
+            }
+
+            GridRow {
+              Text("模型")
+                .frame(width: 90, alignment: .trailing)
+              TextField("deepseek-chat", text: $model.deepSeekModel)
+                .textFieldStyle(.roundedBorder)
+            }
+          }
+          .padding(10)
+        } label: {
+          Label("DeepSeek API", systemImage: "network")
+            .font(.headline)
+        }
+
+        HStack(spacing: 10) {
+          Button("保存配置") { model.saveDeepSeekSettings() }
+            .buttonStyle(.borderedProminent)
+          Button("测试连接") { model.testDeepSeekConnection() }
+            .disabled(model.isTestingDeepSeek)
+          if model.isTestingDeepSeek {
+            ProgressView()
+              .controlSize(.small)
+          }
+        }
+
+        HStack(alignment: .top, spacing: 10) {
+          Image(
+            systemName: model.deepSeekConnectionSucceeded == true
+              ? "checkmark.circle.fill"
+              : model.deepSeekConnectionSucceeded == false
+                ? "exclamationmark.triangle.fill" : "info.circle"
+          )
+          .foregroundStyle(
+            model.deepSeekConnectionSucceeded == true
+              ? Color.green
+              : model.deepSeekConnectionSucceeded == false ? Color.orange : Color.secondary
+          )
+          Text(model.deepSeekConnectionMessage)
+        }
+        .font(.callout)
+
+        VStack(alignment: .leading, spacing: 8) {
+          Label("API Key 只保存在这台 Mac 的系统 Keychain 中。", systemImage: "lock.fill")
+          Label("连接测试不会上传 Prompt，只验证当前密钥能否访问模型列表。", systemImage: "checkmark.shield")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: 720, alignment: .leading)
+      .padding(32)
+      .frame(maxWidth: .infinity, alignment: .top)
+    }
+  }
+}
+
 struct ContentView: View {
   @ObservedObject var model: AppModel
   @State private var pendingDeletion: PromptSection?
@@ -1038,7 +1161,6 @@ struct ContentView: View {
   @State private var page: WorkspacePage = .editor
   @State private var versionSearch = ""
   @State private var hoveredSectionID: String?
-  @State private var revealsDeepSeekAPIKey = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -1118,97 +1240,7 @@ struct ContentView: View {
   }
 
   private var settingsPage: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 22) {
-        VStack(alignment: .leading, spacing: 6) {
-          Text("设置")
-            .font(.largeTitle.bold())
-          Text("配置应用直连 DeepSeek 所需的本地凭证。")
-            .foregroundStyle(.secondary)
-        }
-
-        GroupBox {
-          Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 16) {
-            GridRow {
-              Text("API Key")
-                .frame(width: 90, alignment: .trailing)
-              HStack(spacing: 8) {
-                if revealsDeepSeekAPIKey {
-                  TextField("sk-…", text: $model.deepSeekAPIKey)
-                    .textFieldStyle(.roundedBorder)
-                } else {
-                  SecureField("sk-…", text: $model.deepSeekAPIKey)
-                    .textFieldStyle(.roundedBorder)
-                }
-                Button {
-                  revealsDeepSeekAPIKey.toggle()
-                } label: {
-                  Image(systemName: revealsDeepSeekAPIKey ? "eye.slash" : "eye")
-                    .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .help(revealsDeepSeekAPIKey ? "隐藏 API Key" : "显示 API Key")
-              }
-            }
-
-            GridRow {
-              Text("接口地址")
-                .frame(width: 90, alignment: .trailing)
-              TextField("https://api.deepseek.com", text: $model.deepSeekBaseURL)
-                .textFieldStyle(.roundedBorder)
-            }
-
-            GridRow {
-              Text("模型")
-                .frame(width: 90, alignment: .trailing)
-              TextField("deepseek-chat", text: $model.deepSeekModel)
-                .textFieldStyle(.roundedBorder)
-            }
-          }
-          .padding(10)
-        } label: {
-          Label("DeepSeek API", systemImage: "network")
-            .font(.headline)
-        }
-
-        HStack(spacing: 10) {
-          Button("保存配置") { model.saveDeepSeekSettings() }
-            .buttonStyle(.borderedProminent)
-          Button("测试连接") { model.testDeepSeekConnection() }
-            .disabled(model.isTestingDeepSeek)
-          if model.isTestingDeepSeek {
-            ProgressView()
-              .controlSize(.small)
-          }
-        }
-
-        HStack(alignment: .top, spacing: 10) {
-          Image(
-            systemName: model.deepSeekConnectionSucceeded == true
-              ? "checkmark.circle.fill"
-              : model.deepSeekConnectionSucceeded == false
-                ? "exclamationmark.triangle.fill" : "info.circle"
-          )
-          .foregroundStyle(
-            model.deepSeekConnectionSucceeded == true
-              ? Color.green
-              : model.deepSeekConnectionSucceeded == false ? Color.orange : Color.secondary
-          )
-          Text(model.deepSeekConnectionMessage)
-        }
-        .font(.callout)
-
-        VStack(alignment: .leading, spacing: 8) {
-          Label("API Key 只保存在这台 Mac 的系统 Keychain 中。", systemImage: "lock.fill")
-          Label("连接测试不会上传 Prompt，只验证当前密钥能否访问模型列表。", systemImage: "checkmark.shield")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-      }
-      .frame(maxWidth: 720, alignment: .leading)
-      .padding(32)
-      .frame(maxWidth: .infinity, alignment: .top)
-    }
+    DeepSeekSettingsView(model: model)
   }
 
   @ViewBuilder
