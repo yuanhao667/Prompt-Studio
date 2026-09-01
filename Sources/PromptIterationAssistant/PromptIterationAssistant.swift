@@ -160,47 +160,54 @@ struct AppRootView: View {
       .help(showsSidebar ? "收起文件列表" : "展开文件列表")
 
       Spacer()
-      ControlGroup {
-        Button {
-          guard let model else { return }
-          if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.status = "请先配置 DeepSeek API Key"
-            workspacePage = .settings
-          } else {
-            workspacePage = .editor
-            model.generatePrompt()
+      HStack(spacing: 8) {
+        ControlGroup {
+          Button {
+            guard let model else { return }
+            if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+              model.status = "请先配置 DeepSeek API Key"
+              workspacePage = .settings
+            } else {
+              workspacePage = .editor
+              model.generatePrompt()
+            }
+          } label: {
+            Label(
+              model?.isGeneratingPrompt == true ? "生成中" : "AI 生成",
+              systemImage: model?.isGeneratingPrompt == true ? "hourglass" : "sparkles"
+            )
+            .labelStyle(.iconOnly)
           }
-        } label: {
-          Label(
-            model?.isGeneratingPrompt == true ? "生成中" : "AI 生成",
-            systemImage: model?.isGeneratingPrompt == true ? "hourglass" : "sparkles"
-          )
-          .labelStyle(.iconOnly)
-        }
-        .disabled(model?.isGeneratingPrompt == true)
-        .help("AI 生成")
+          .disabled(model?.isGeneratingPrompt == true)
+          .help("AI 生成")
 
-        if model?.showsComparison == true {
-          Button { model?.clearComparison() } label: {
-            Label("收起对比", systemImage: "rectangle.compress.vertical")
-              .labelStyle(.iconOnly)
+          if model?.showsComparison == true {
+            Button { model?.clearComparison() } label: {
+              Label("收起对比", systemImage: "rectangle.compress.vertical")
+                .labelStyle(.iconOnly)
+            }
+            .help("收起对比")
           }
-          .help("收起对比")
         }
+        .controlSize(.large)
 
         Button {
           workspacePage = workspacePage == .settings ? .editor : .settings
         } label: {
-          Label("设置", systemImage: "gearshape")
-            .labelStyle(.iconOnly)
+          Image(systemName: "gearshape")
+            .font(.system(size: 18, weight: .semibold))
+            .frame(width: 36, height: 36)
+            .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+            .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .help(workspacePage == .settings ? "关闭设置" : "设置")
       }
-      .controlSize(.large)
     }
     .padding(.horizontal, 10)
-    .padding(.top, -8)
-    .padding(.bottom, 2)
+    .padding(.top, -24)
+    .padding(.bottom, -8)
   }
 
   private var launchPage: some View {
@@ -313,13 +320,13 @@ struct AppRootView: View {
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
 
-                Button { createPromptFolder(in: folderURL) } label: {
+                Button { createPromptDocument(in: folder.url) } label: {
                   Image(systemName: "plus")
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("新建 Prompt")
+                .help("在当前项目中新建 Prompt 文件")
               }
 
               if expandedFolderIDs.contains(folder.id) {
@@ -524,6 +531,18 @@ struct AppRootView: View {
       try writeDefaultPrompt(to: promptURL)
       refreshFiles(in: folderURL)
       openDocument(promptURL)
+    } catch {
+      launcherError = error.localizedDescription
+    }
+  }
+
+  private func createPromptDocument(in promptFolderURL: URL) {
+    do {
+      let promptURL = uniquePromptURL(in: promptFolderURL)
+      try writeDefaultPrompt(to: promptURL)
+      if let folderURL { refreshFiles(in: folderURL) }
+      openDocument(promptURL)
+      workspacePage = .editor
     } catch {
       launcherError = error.localizedDescription
     }
