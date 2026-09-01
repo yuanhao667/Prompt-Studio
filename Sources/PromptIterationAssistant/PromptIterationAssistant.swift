@@ -585,27 +585,37 @@ struct ContentView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {
       HSplitView {
-        VStack(alignment: .leading, spacing: 10) {
-          Text("历史版本").font(.title2.bold())
-          TextField("搜索版本或备注", text: $versionSearch)
-            .textFieldStyle(.roundedBorder)
-          Text("共 \(model.versions.count) 个不可变快照")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          ScrollView {
-            LazyVStack(spacing: 6) {
-              ForEach(filteredVersions) { version in
-                versionRow(version)
+        VStack(alignment: .leading, spacing: 0) {
+          HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+              Text("历史版本").font(.title2.bold())
+              Text("共 \(model.versions.count) 个不可变快照")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+          }
+          .padding(14)
+          Divider()
+
+          VStack(alignment: .leading, spacing: 10) {
+            TextField("搜索版本或备注", text: $versionSearch)
+              .textFieldStyle(.roundedBorder)
+            ScrollView {
+              LazyVStack(spacing: 6) {
+                ForEach(filteredVersions) { version in
+                  versionRow(version)
+                }
               }
             }
+            if filteredVersions.isEmpty {
+              Text("没有匹配的版本")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
           }
-          if filteredVersions.isEmpty {
-            Text("没有匹配的版本")
-              .foregroundStyle(.secondary)
-              .frame(maxWidth: .infinity, maxHeight: .infinity)
-          }
+          .padding(14)
         }
-        .padding(14)
         .frame(minWidth: 250, idealWidth: 290, maxWidth: 330)
 
         historyDetail

@@ -96,9 +96,18 @@
         background: var(--surface-strong);
         box-shadow: var(--shadow);
       }
-      .version-panel { min-width: 0; padding: 16px; border-right: 1px solid var(--line); background: var(--surface); }
-      .panel-title { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
-      .panel-caption { margin: 3px 0 13px; color: var(--muted); font-size: 12px; }
+      .version-panel { min-width: 0; border-right: 1px solid var(--line); background: var(--surface); }
+      .version-head {
+        min-height: 78px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .version-body { padding: 14px 16px; }
+      .panel-title { margin: 0; font-size: 20px; letter-spacing: -0.025em; }
+      .panel-caption { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
       .search {
         width: 100%;
         min-height: 38px;
@@ -209,10 +218,14 @@
 
       <section class="history-window" aria-label="Prompt 历史版本管理演示">
         <aside class="version-panel">
-          <h2 class="panel-title">版本记录</h2>
-          <p class="panel-caption" id="version-count"></p>
-          <input class="search" id="version-search" type="search" placeholder="搜索版本或备注" aria-label="搜索版本或备注" />
-          <div class="version-list" id="version-list"></div>
+          <div class="version-head">
+            <h2 class="panel-title">版本记录</h2>
+            <p class="panel-caption" id="version-count"></p>
+          </div>
+          <div class="version-body">
+            <input class="search" id="version-search" type="search" placeholder="搜索版本或备注" aria-label="搜索版本或备注" />
+            <div class="version-list" id="version-list"></div>
+          </div>
         </aside>
 
         <div class="detail-panel">
