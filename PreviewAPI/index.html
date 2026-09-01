@@ -202,21 +202,23 @@
         font-weight: 720;
       }
       .dimension-header {
-        grid-template-columns: 0 12px minmax(0, 1fr) auto;
-        transition: grid-template-columns 140ms ease;
+        position: relative;
+        grid-template-columns: 12px minmax(0, 1fr) auto;
+        padding-left: 0;
+        transition: padding-left 140ms ease;
       }
-      .section-title { grid-template-columns: 0 12px minmax(0, 1fr) auto; }
+      .section-title { grid-template-columns: 12px minmax(0, 1fr) auto; }
       .dimension-header > .drag-handle {
-        width: 0;
-        overflow: hidden;
+        position: absolute;
+        left: 0;
         opacity: 0;
         pointer-events: none;
-        transition: width 140ms ease, opacity 100ms ease;
+        transition: opacity 100ms ease;
       }
       .dimension:hover .dimension-header,
       .dimension:focus-within .dimension-header,
       .dimension.dragging .dimension-header {
-        grid-template-columns: 22px 12px minmax(0, 1fr) auto;
+        padding-left: 28px;
       }
       .dimension:hover .dimension-header > .drag-handle,
       .dimension:focus-within .dimension-header > .drag-handle,
@@ -494,7 +496,7 @@
       }
 
       function candidateSectionMarkup(dimension, index) {
-        return `<section class="dimension ${dimension.hidden ? "is-hidden" : ""}" data-dimension-index="${index}"><div class="section-title"><span aria-hidden="true"></span><span class="markdown-mark" aria-hidden="true">#</span><span data-candidate-title="${index}">${escapeHTML(dimension.title || "未命名维度")}</span><span aria-hidden="true"></span></div><textarea readonly data-field="candidate" data-index="${index}" aria-label="候选${escapeHTML(dimension.title || "未命名维度")}">${escapeHTML(dimension.candidate)}</textarea></section>`;
+        return `<section class="dimension ${dimension.hidden ? "is-hidden" : ""}" data-dimension-index="${index}"><div class="section-title"><span class="markdown-mark" aria-hidden="true">#</span><span data-candidate-title="${index}">${escapeHTML(dimension.title || "未命名维度")}</span><span aria-hidden="true"></span></div><textarea readonly data-field="candidate" data-index="${index}" aria-label="候选${escapeHTML(dimension.title || "未命名维度")}">${escapeHTML(dimension.candidate)}</textarea></section>`;
       }
 
       function renderDocuments() {

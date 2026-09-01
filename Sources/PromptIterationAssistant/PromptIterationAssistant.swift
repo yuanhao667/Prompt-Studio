@@ -1,5 +1,6 @@
 import AppKit
 import PromptIterationCore
+import Security
 import SwiftUI
 
 @main
@@ -38,6 +39,12 @@ final class AppModel: ObservableObject {
   @Published var hasUnversionedChanges = false
   @Published var status = "就绪"
   @Published var errorMessage: String?
+  @Published var deepSeekAPIKey = ""
+  @Published var deepSeekBaseURL = "https://api.deepseek.com"
+  @Published var deepSeekModel = "deepseek-chat"
+  @Published var isTestingDeepSeek = false
+  @Published var deepSeekConnectionSucceeded: Bool?
+  @Published var deepSeekConnectionMessage = "尚未配置"
 
   let databaseURL: URL
   private var repository: WorkspaceRepository?
@@ -67,6 +74,20 @@ final class AppModel: ObservableObject {
       repository = nil
       errorMessage = error.localizedDescription
       status = "数据库打开失败"
+    }
+
+    deepSeekBaseURL = UserDefaults.standard.string(forKey: "deepseek.baseURL")
+      ?? "https://api.deepseek.com"
+    deepSeekModel = UserDefaults.standard.string(forKey: "deepseek.model")
+      ?? "deepseek-chat"
+    do {
+      deepSeekAPIKey = try DeepSeekKeychain.load() ?? ""
+      if !deepSeekAPIKey.isEmpty {
+        deepSeekConnectionMessage = "已读取本机配置，尚未测试"
+      }
+    } catch {
+      deepSeekConnectionSucceeded = false
+      deepSeekConnectionMessage = "无法读取 Keychain：\(error.localizedDescription)"
     }
   }
 
@@ -339,6 +360,92 @@ final class AppModel: ObservableObject {
     status = "已复制 Markdown 候选 Prompt"
   }
 
+  @discardableResult
+  func saveDeepSeekSettings() -> Bool {
+    let apiKey = deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    let baseURL = deepSeekBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+      .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let model = deepSeekModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !apiKey.isEmpty else {
+      deepSeekConnectionSucceeded = false
+      deepSeekConnectionMessage = "请先填写 DeepSeek API Key"
+      status = deepSeekConnectionMessage
+      return false
+    }
+    guard let url = URL(string: baseURL), url.scheme == "https", url.host != nil else {
+      deepSeekConnectionSucceeded = false
+      deepSeekConnectionMessage = "接口地址必须是有效的 HTTPS 地址"
+      status = deepSeekConnectionMessage
+      return false
+    }
+    guard !model.isEmpty else {
+      deepSeekConnectionSucceeded = false
+      deepSeekConnectionMessage = "请填写模型名称"
+      status = deepSeekConnectionMessage
+      return false
+    }
+
+    do {
+      try DeepSeekKeychain.save(apiKey)
+      UserDefaults.standard.set(baseURL, forKey: "deepseek.baseURL")
+      UserDefaults.standard.set(model, forKey: "deepseek.model")
+      deepSeekAPIKey = apiKey
+      deepSeekBaseURL = baseURL
+      deepSeekModel = model
+      deepSeekConnectionSucceeded = nil
+      deepSeekConnectionMessage = "配置已保存，尚未测试"
+      status = "DeepSeek 配置已保存到本机"
+      return true
+    } catch {
+      deepSeekConnectionSucceeded = false
+      deepSeekConnectionMessage = "保存失败：\(error.localizedDescription)"
+      status = deepSeekConnectionMessage
+      return false
+    }
+  }
+
+  func testDeepSeekConnection() {
+    guard saveDeepSeekSettings() else { return }
+    guard let endpoint = URL(string: "\(deepSeekBaseURL)/models") else { return }
+
+    isTestingDeepSeek = true
+    deepSeekConnectionSucceeded = nil
+    deepSeekConnectionMessage = "正在连接 DeepSeek…"
+
+    Task {
+      do {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(deepSeekAPIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+          throw DeepSeekConfigurationError.invalidResponse
+        }
+        guard (200...299).contains(response.statusCode) else {
+          let message = Self.deepSeekErrorMessage(from: data)
+          throw DeepSeekConfigurationError.requestFailed(
+            statusCode: response.statusCode,
+            message: message
+          )
+        }
+
+        isTestingDeepSeek = false
+        deepSeekConnectionSucceeded = true
+        deepSeekConnectionMessage = "连接成功，API Key 可以使用"
+        status = "DeepSeek 连接测试成功"
+      } catch {
+        isTestingDeepSeek = false
+        deepSeekConnectionSucceeded = false
+        deepSeekConnectionMessage = "连接失败：\(error.localizedDescription)"
+        status = deepSeekConnectionMessage
+      }
+    }
+  }
+
   private func mutateWorkspace(_ change: (inout PromptWorkspace) -> Void) {
     guard var workspace else { return }
     change(&workspace)
@@ -397,6 +504,15 @@ final class AppModel: ObservableObject {
     status = error.localizedDescription
   }
 
+  private static func deepSeekErrorMessage(from data: Data) -> String? {
+    guard
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let error = object["error"] as? [String: Any],
+      let message = error["message"] as? String
+    else { return nil }
+    return message
+  }
+
   private static func hasChanges(
     workspace: PromptWorkspace,
     repository: WorkspaceRepository
@@ -423,9 +539,79 @@ final class AppModel: ObservableObject {
   }
 }
 
+private enum DeepSeekConfigurationError: LocalizedError {
+  case invalidResponse
+  case requestFailed(statusCode: Int, message: String?)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidResponse:
+      return "服务器返回了无法识别的响应"
+    case let .requestFailed(statusCode, message):
+      if let message, !message.isEmpty {
+        return "HTTP \(statusCode)：\(message)"
+      }
+      return "HTTP \(statusCode)"
+    }
+  }
+}
+
+private enum DeepSeekKeychain {
+  private static let service = "com.promptiterationassistant.app"
+  private static let account = "deepseek-api-key"
+
+  static func load() throws -> String? {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    if status == errSecItemNotFound { return nil }
+    guard status == errSecSuccess else { throw KeychainError(status: status) }
+    guard let data = item as? Data, let value = String(data: data, encoding: .utf8) else {
+      throw KeychainError(status: errSecDecode)
+    }
+    return value
+  }
+
+  static func save(_ value: String) throws {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+    ]
+    let data = Data(value.utf8)
+    let updateStatus = SecItemUpdate(
+      query as CFDictionary,
+      [kSecValueData as String: data] as CFDictionary
+    )
+    if updateStatus == errSecSuccess { return }
+    guard updateStatus == errSecItemNotFound else { throw KeychainError(status: updateStatus) }
+
+    var item = query
+    item[kSecValueData as String] = data
+    item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+    let addStatus = SecItemAdd(item as CFDictionary, nil)
+    guard addStatus == errSecSuccess else { throw KeychainError(status: addStatus) }
+  }
+
+  private struct KeychainError: LocalizedError {
+    let status: OSStatus
+
+    var errorDescription: String? {
+      SecCopyErrorMessageString(status, nil) as String? ?? "Keychain 错误 \(status)"
+    }
+  }
+}
+
 private enum WorkspacePage: String, CaseIterable, Identifiable {
   case editor = "编辑"
   case history = "历史版本"
+  case settings = "设置"
 
   var id: Self { self }
 }
@@ -437,6 +623,7 @@ struct ContentView: View {
   @State private var page: WorkspacePage = .editor
   @State private var versionSearch = ""
   @State private var hoveredSectionID: String?
+  @State private var revealsDeepSeekAPIKey = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -444,8 +631,10 @@ struct ContentView: View {
       Divider()
       if page == .editor {
         editorPage
-      } else {
+      } else if page == .history {
         historyPage
+      } else {
+        settingsPage
       }
       Divider()
       footer
@@ -507,10 +696,104 @@ struct ContentView: View {
       }
       .pickerStyle(.segmented)
       .labelsHidden()
-      .frame(width: 220)
+      .frame(width: 300)
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 10)
+  }
+
+  private var settingsPage: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 6) {
+          Text("设置")
+            .font(.largeTitle.bold())
+          Text("配置应用直连 DeepSeek 所需的本地凭证。")
+            .foregroundStyle(.secondary)
+        }
+
+        GroupBox {
+          Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 16) {
+            GridRow {
+              Text("API Key")
+                .frame(width: 90, alignment: .trailing)
+              HStack(spacing: 8) {
+                if revealsDeepSeekAPIKey {
+                  TextField("sk-…", text: $model.deepSeekAPIKey)
+                    .textFieldStyle(.roundedBorder)
+                } else {
+                  SecureField("sk-…", text: $model.deepSeekAPIKey)
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button {
+                  revealsDeepSeekAPIKey.toggle()
+                } label: {
+                  Image(systemName: revealsDeepSeekAPIKey ? "eye.slash" : "eye")
+                    .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help(revealsDeepSeekAPIKey ? "隐藏 API Key" : "显示 API Key")
+              }
+            }
+
+            GridRow {
+              Text("接口地址")
+                .frame(width: 90, alignment: .trailing)
+              TextField("https://api.deepseek.com", text: $model.deepSeekBaseURL)
+                .textFieldStyle(.roundedBorder)
+            }
+
+            GridRow {
+              Text("模型")
+                .frame(width: 90, alignment: .trailing)
+              TextField("deepseek-chat", text: $model.deepSeekModel)
+                .textFieldStyle(.roundedBorder)
+            }
+          }
+          .padding(10)
+        } label: {
+          Label("DeepSeek API", systemImage: "network")
+            .font(.headline)
+        }
+
+        HStack(spacing: 10) {
+          Button("保存配置") { model.saveDeepSeekSettings() }
+            .buttonStyle(.borderedProminent)
+          Button("测试连接") { model.testDeepSeekConnection() }
+            .disabled(model.isTestingDeepSeek)
+          if model.isTestingDeepSeek {
+            ProgressView()
+              .controlSize(.small)
+          }
+        }
+
+        HStack(alignment: .top, spacing: 10) {
+          Image(
+            systemName: model.deepSeekConnectionSucceeded == true
+              ? "checkmark.circle.fill"
+              : model.deepSeekConnectionSucceeded == false
+                ? "exclamationmark.triangle.fill" : "info.circle"
+          )
+          .foregroundStyle(
+            model.deepSeekConnectionSucceeded == true
+              ? Color.green
+              : model.deepSeekConnectionSucceeded == false ? Color.orange : Color.secondary
+          )
+          Text(model.deepSeekConnectionMessage)
+        }
+        .font(.callout)
+
+        VStack(alignment: .leading, spacing: 8) {
+          Label("API Key 只保存在这台 Mac 的系统 Keychain 中。", systemImage: "lock.fill")
+          Label("连接测试不会上传 Prompt，只验证当前密钥能否访问模型列表。", systemImage: "checkmark.shield")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: 720, alignment: .leading)
+      .padding(32)
+      .frame(maxWidth: .infinity, alignment: .top)
+    }
   }
 
   @ViewBuilder
@@ -923,7 +1206,7 @@ struct ContentView: View {
   private func currentSectionEditor(_ section: PromptSection) -> some View {
     let isHovered = hoveredSectionID == section.id
     return VStack(alignment: .leading, spacing: 8) {
-      HStack {
+      HStack(spacing: isHovered ? 8 : 0) {
         Image(systemName: "line.3.horizontal")
           .foregroundStyle(.secondary)
           .frame(width: isHovered ? 16 : 0)
