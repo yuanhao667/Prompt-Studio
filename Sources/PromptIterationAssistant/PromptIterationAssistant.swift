@@ -235,7 +235,7 @@ struct AppRootView: View {
   }
 
   private var launchPage: some View {
-    VStack(alignment: .leading, spacing: 24) {
+    VStack(alignment: .leading, spacing: 32) {
       VStack(alignment: .leading, spacing: 8) {
         Text("Prompt 迭代助手")
           .font(.largeTitle.bold())
@@ -261,9 +261,8 @@ struct AppRootView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .padding(.horizontal, 40)
-    .padding(.top, 52)
-    .padding(.bottom, 40)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .padding(.bottom, 72)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     .background(Color(nsColor: .windowBackgroundColor))
   }
 
@@ -284,8 +283,8 @@ struct AppRootView: View {
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.leading)
       }
-      .padding(18)
-      .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+      .padding(20)
+      .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
       .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
       .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
     }
