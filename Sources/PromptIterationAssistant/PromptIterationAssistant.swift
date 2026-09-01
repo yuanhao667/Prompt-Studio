@@ -17,12 +17,22 @@ struct PromptIterationAssistantApp: App {
   }
 }
 
+private enum WorkspaceItemKind {
+  case folder
+  case document
+  case version(Int)
+}
+
 private struct WorkspaceItem: Identifiable {
   let url: URL
+  let kind: WorkspaceItemKind
   let children: [WorkspaceItem]?
 
   var id: String { url.standardizedFileURL.path }
-  var isDirectory: Bool { children != nil }
+  var isDirectory: Bool {
+    if case .folder = kind { return true }
+    return false
+  }
 }
 
 struct AppRootView: View {
@@ -66,7 +76,11 @@ struct AppRootView: View {
           VStack(spacing: 0) {
             workspaceNavigation
             if let model {
-              ContentView(model: model, page: $workspacePage)
+              ContentView(
+                model: model,
+                page: $workspacePage,
+                onVersionsChanged: { refreshFiles(in: folderURL) }
+              )
             } else {
               VStack(spacing: 12) {
                 Image(systemName: "doc.badge.plus")
@@ -74,7 +88,7 @@ struct AppRootView: View {
                   .foregroundStyle(.secondary)
                 Text("这个文件夹里还没有 Markdown Prompt")
                   .font(.headline)
-                Button("新建 Prompt") { createPrompt(in: folderURL) }
+                Button("新建 Prompt") { createPromptFolder(in: folderURL) }
                   .buttonStyle(.borderedProminent)
               }
               .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -185,13 +199,7 @@ struct AppRootView: View {
         HStack(spacing: 14) {
           launchAction(
             "新建 Prompt",
-            detail: "创建带固定标题模板的 .md 文件",
-            systemImage: "doc.badge.plus",
-            action: createStandalonePrompt
-          )
-          launchAction(
-            "新建文件夹",
-            detail: "创建本地文件夹和第一个 Prompt",
+            detail: "创建 Prompt 文件夹和 System Prompt.md",
             systemImage: "folder.badge.plus",
             action: createFolder
           )
@@ -261,20 +269,13 @@ struct AppRootView: View {
           .font(.headline)
           .lineLimit(1)
         Spacer()
-        Menu {
-          Button("新建 Prompt", systemImage: "doc.badge.plus") {
-            createPrompt(in: folderURL)
-          }
-          Button("新建文件夹", systemImage: "folder.badge.plus") {
-            createPromptFolder(in: folderURL)
-          }
-        } label: {
+        Button { createPromptFolder(in: folderURL) } label: {
           Image(systemName: "plus")
+            .frame(width: 30, height: 30)
+            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("新建 Prompt 或文件夹")
+        .buttonStyle(.plain)
+        .help("新建 Prompt 文件夹")
       }
       .padding(.leading, 72)
       .padding(.trailing, 12)
@@ -303,11 +304,44 @@ struct AppRootView: View {
       Label(item.url.lastPathComponent, systemImage: "folder")
         .lineLimit(1)
         .padding(.vertical, 6)
+    } else if case let .version(number) = item.kind {
+      Button {
+        openHistoryVersion(number, in: item.url.deletingLastPathComponent())
+      } label: {
+        HStack(spacing: 8) {
+          Text("V\(number)")
+            .font(.caption.bold().monospacedDigit())
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .foregroundStyle(.blue)
+            .background(Color.blue.opacity(0.14), in: Capsule())
+          Text("历史版本")
+            .foregroundStyle(.secondary)
+          Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .background(
+        workspacePage == .history
+          && model?.documentURL?.deletingLastPathComponent().standardizedFileURL
+            == item.url.deletingLastPathComponent().standardizedFileURL
+          && model?.selectedHistoryVersion?.number == number
+          ? Color.blue.opacity(0.12) : Color.clear,
+        in: RoundedRectangle(cornerRadius: 7)
+      )
     } else {
       HStack(spacing: 4) {
         Button { openDocument(item.url) } label: {
           HStack(spacing: 8) {
-            Image(systemName: "doc.text")
+            Text("最新版本")
+              .font(.caption.bold())
+              .padding(.horizontal, 7)
+              .padding(.vertical, 3)
+              .foregroundStyle(.blue)
+              .background(Color.blue.opacity(0.14), in: Capsule())
             Text(item.url.deletingPathExtension().lastPathComponent)
               .lineLimit(1)
             Spacer()
@@ -356,16 +390,6 @@ struct AppRootView: View {
     }
   }
 
-  private func createStandalonePrompt() {
-    let panel = NSSavePanel()
-    panel.title = "新建 Prompt"
-    panel.nameFieldStringValue = "System Prompt.md"
-    panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
-    panel.canCreateDirectories = true
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    createDocument(at: url.pathExtension.lowercased() == "md" ? url : url.appendingPathExtension("md"))
-  }
-
   private func createFolder() {
     let panel = NSSavePanel()
     panel.title = "新建 Prompt 文件夹"
@@ -378,7 +402,7 @@ struct AppRootView: View {
       try markPromptFolder(url)
       let promptURL = uniquePromptURL(in: url)
       try writeDefaultPrompt(to: promptURL)
-      openWorkspace(url, selecting: promptURL)
+      openWorkspace(url.deletingLastPathComponent(), selecting: promptURL)
     } catch {
       launcherError = error.localizedDescription
     }
@@ -395,17 +419,6 @@ struct AppRootView: View {
     openWorkspace(url)
   }
 
-  private func createPrompt(in folderURL: URL) {
-    let panel = NSSavePanel()
-    panel.title = "在文件夹中新建 Prompt"
-    panel.directoryURL = folderURL
-    panel.nameFieldStringValue = "System Prompt.md"
-    panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
-    panel.canCreateDirectories = false
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    createDocument(at: url.pathExtension.lowercased() == "md" ? url : url.appendingPathExtension("md"))
-  }
-
   private func createPromptFolder(in folderURL: URL) {
     let panel = NSSavePanel()
     panel.title = "新建 Prompt 文件夹"
@@ -417,22 +430,29 @@ struct AppRootView: View {
     do {
       try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
       try markPromptFolder(url)
+      let promptURL = uniquePromptURL(in: url)
+      try writeDefaultPrompt(to: promptURL)
       refreshFiles(in: folderURL)
-    } catch {
-      launcherError = error.localizedDescription
-    }
-  }
-
-  private func createDocument(at url: URL) {
-    do {
-      try writeDefaultPrompt(to: url)
-      openWorkspace(url.deletingLastPathComponent(), selecting: url)
+      openDocument(promptURL)
     } catch {
       launcherError = error.localizedDescription
     }
   }
 
   private func openWorkspace(_ url: URL, selecting selected: URL? = nil) {
+    if selected == nil, (try? isPromptFolder(url)) == true,
+      let files = try? FileManager.default.contentsOfDirectory(
+        at: url,
+        includingPropertiesForKeys: nil,
+        options: [.skipsHiddenFiles]
+      ),
+      let promptURL = files.first(where: {
+        versionNumber(from: $0) == nil && isPromptDocument($0)
+      })
+    {
+      openWorkspace(url.deletingLastPathComponent(), selecting: promptURL)
+      return
+    }
     folderURL = url
     refreshFiles(in: url)
     if let selected {
@@ -446,6 +466,32 @@ struct AppRootView: View {
 
   private func openDocument(_ url: URL) {
     model = AppModel(documentURL: url)
+    if let folderURL { refreshFiles(in: folderURL) }
+  }
+
+  private func openHistoryVersion(_ number: Int, in promptFolder: URL) {
+    do {
+      let promptURL = try FileManager.default.contentsOfDirectory(
+        at: promptFolder,
+        includingPropertiesForKeys: nil,
+        options: [.skipsHiddenFiles]
+      ).first { versionNumber(from: $0) == nil && isPromptDocument($0) }
+      guard let promptURL else {
+        launcherError = "这个 Prompt 文件夹里没有可编辑的工作稿"
+        return
+      }
+      if model?.documentURL?.standardizedFileURL != promptURL.standardizedFileURL {
+        openDocument(promptURL)
+      }
+      guard let version = model?.versions.first(where: { $0.number == number }) else {
+        launcherError = "找不到历史版本 V\(number)"
+        return
+      }
+      model?.selectHistory(version)
+      workspacePage = .history
+    } catch {
+      launcherError = error.localizedDescription
+    }
   }
 
   private func beginRenaming(_ url: URL) {
@@ -520,7 +566,7 @@ struct AppRootView: View {
 
   private func refreshFiles(in folderURL: URL) {
     do {
-      workspaceItems = try loadWorkspaceItems(in: folderURL)
+      workspaceItems = try loadWorkspaceItems(in: folderURL, isRoot: true)
       markdownFiles = flattenedMarkdownFiles(in: workspaceItems)
     } catch {
       launcherError = error.localizedDescription
@@ -529,7 +575,7 @@ struct AppRootView: View {
     }
   }
 
-  private func loadWorkspaceItems(in folderURL: URL) throws -> [WorkspaceItem] {
+  private func loadWorkspaceItems(in folderURL: URL, isRoot: Bool) throws -> [WorkspaceItem] {
     try FileManager.default.contentsOfDirectory(
       at: folderURL,
       includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
@@ -539,13 +585,27 @@ struct AppRootView: View {
       let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
       if values.isDirectory == true, values.isSymbolicLink != true {
         guard try isPromptFolder(url) else { return nil }
-        return WorkspaceItem(url: url, children: try loadWorkspaceItems(in: url))
+        return WorkspaceItem(
+          url: url,
+          kind: .folder,
+          children: try loadWorkspaceItems(in: url, isRoot: false)
+        )
       }
-      return isPromptDocument(url)
-        ? WorkspaceItem(url: url, children: nil) : nil
+      guard !isRoot, isPromptDocument(url) else { return nil }
+      return WorkspaceItem(
+        url: url,
+        kind: versionNumber(from: url).map(WorkspaceItemKind.version) ?? .document,
+        children: nil
+      )
     }
     .sorted {
       if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+      switch ($0.kind, $1.kind) {
+      case (.document, .version): return true
+      case (.version, .document): return false
+      case let (.version(lhs), .version(rhs)): return lhs > rhs
+      default: break
+      }
       return $0.url.lastPathComponent.localizedCaseInsensitiveCompare($1.url.lastPathComponent)
         == .orderedAscending
     }
@@ -553,8 +613,16 @@ struct AppRootView: View {
 
   private func flattenedMarkdownFiles(in items: [WorkspaceItem]) -> [URL] {
     items.flatMap { item in
-      item.children.map(flattenedMarkdownFiles(in:)) ?? [item.url]
+      if let children = item.children { return flattenedMarkdownFiles(in: children) }
+      if case .document = item.kind { return [item.url] }
+      return []
     }
+  }
+
+  private func versionNumber(from url: URL) -> Int? {
+    let name = url.deletingPathExtension().lastPathComponent
+    guard name.first == "V", let number = Int(name.dropFirst()) else { return nil }
+    return number
   }
 
   private func isPromptFolder(_ url: URL) throws -> Bool {
@@ -572,7 +640,6 @@ struct AppRootView: View {
 
   private func isPromptDocument(_ url: URL) -> Bool {
     guard url.pathExtension.lowercased() == "md" else { return false }
-    if FileManager.default.fileExists(atPath: AppModel.databaseURL(for: url).path) { return true }
     guard let markdown = try? String(contentsOf: url, encoding: .utf8) else { return false }
     return PromptMarkdown.isStructuredPrompt(markdown)
   }
@@ -627,8 +694,12 @@ final class AppModel: ObservableObject {
 
   init(documentURL: URL? = nil) {
     self.documentURL = documentURL?.standardizedFileURL
-    databaseURL = Self.databaseURL(for: documentURL)
+    databaseURL = Self.databaseURL(for: self.documentURL)
     do {
+      try Self.migrateLegacyDatabaseIfNeeded(
+        documentURL: self.documentURL,
+        destination: databaseURL
+      )
       let repository = try WorkspaceRepository(databaseURL: databaseURL)
       self.repository = repository
       var workspace = try repository.loadOrCreateWorkspace()
@@ -644,6 +715,16 @@ final class AppModel: ObservableObject {
       self.workspace = workspace
       comparison = try repository.loadComparison(projectID: workspace.id)
       versions = try repository.listVersions(projectID: workspace.id)
+      if let documentURL = self.documentURL {
+        for version in versions {
+          try Self.writeVersionSnapshot(
+            try repository.versionSections(projectID: workspace.id, number: version.number),
+            number: version.number,
+            beside: documentURL,
+            overwrite: false
+          )
+        }
+      }
       if let latest = versions.first {
         selectedHistoryVersion = latest
         selectedHistorySections = try repository.versionSections(
@@ -874,11 +955,31 @@ final class AppModel: ObservableObject {
     } catch { report(error) }
   }
 
-  func saveVersion() {
-    guard var workspace, let repository else { return }
+  @discardableResult
+  func saveVersion() -> Bool {
+    guard var workspace, let repository else { return false }
     do {
       try repository.saveDraft(workspace)
-      let version = try repository.saveVersion(workspace: workspace, note: "手动保存")
+      let nextNumber = (versions.map(\.number).max() ?? 0) + 1
+      if let documentURL {
+        try Self.writeVersionSnapshot(
+          workspace.sections,
+          number: nextNumber,
+          beside: documentURL,
+          overwrite: true
+        )
+      }
+      let version: VersionSummary
+      do {
+        version = try repository.saveVersion(workspace: workspace, note: "手动保存")
+      } catch {
+        if let documentURL {
+          try? FileManager.default.removeItem(
+            at: Self.versionFileURL(number: nextNumber, beside: documentURL)
+          )
+        }
+        throw error
+      }
       workspace.currentVersion = version.number
       self.workspace = workspace
       versions = try repository.listVersions(projectID: workspace.id)
@@ -892,7 +993,11 @@ final class AppModel: ObservableObject {
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         if versionSaveFeedback == feedback { versionSaveFeedback = nil }
       }
-    } catch { report(error) }
+      return true
+    } catch {
+      report(error)
+      return false
+    }
   }
 
   func copyFullPrompt() {
@@ -1223,6 +1328,21 @@ final class AppModel: ObservableObject {
     }
   }
 
+  private static func versionFileURL(number: Int, beside documentURL: URL) -> URL {
+    documentURL.deletingLastPathComponent().appendingPathComponent("V\(number).md")
+  }
+
+  private static func writeVersionSnapshot(
+    _ sections: [PromptSection],
+    number: Int,
+    beside documentURL: URL,
+    overwrite: Bool
+  ) throws {
+    let url = versionFileURL(number: number, beside: documentURL)
+    if !overwrite, FileManager.default.fileExists(atPath: url.path) { return }
+    try PromptMarkdown.renderAll(sections).write(to: url, atomically: true, encoding: .utf8)
+  }
+
   static func databaseURL(for documentURL: URL?) -> URL {
     let arguments = ProcessInfo.processInfo.arguments
     if let index = arguments.firstIndex(of: "--db"), arguments.indices.contains(index + 1) {
@@ -1234,20 +1354,41 @@ final class AppModel: ObservableObject {
       return URL(fileURLWithPath: NSString(string: custom).expandingTildeInPath)
     }
     if let documentURL {
-      let digest = SHA256.hash(data: Data(documentURL.standardizedFileURL.path.utf8))
-        .map { String(format: "%02x", $0) }
-        .joined()
-      let support =
-        FileManager.default.urls(
-          for: .applicationSupportDirectory,
-          in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-      return support
-        .appendingPathComponent("Prompt Iteration Assistant", isDirectory: true)
-        .appendingPathComponent("Workspaces", isDirectory: true)
-        .appendingPathComponent("\(digest).db")
+      return documentURL.deletingLastPathComponent()
+        .appendingPathComponent(".prompt-history", isDirectory: true)
+        .appendingPathComponent("workspace.db")
     }
     return WorkspaceRepository.defaultDatabaseURL()
+  }
+
+  private static func migrateLegacyDatabaseIfNeeded(
+    documentURL: URL?,
+    destination: URL
+  ) throws {
+    guard
+      let documentURL,
+      ProcessInfo.processInfo.arguments.firstIndex(of: "--db") == nil,
+      ProcessInfo.processInfo.environment["PROMPT_ITERATION_DB"]?.isEmpty != false,
+      !FileManager.default.fileExists(atPath: destination.path)
+    else { return }
+
+    let digest = SHA256.hash(data: Data(documentURL.standardizedFileURL.path.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+    let support = FileManager.default.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first ?? FileManager.default.homeDirectoryForCurrentUser
+    let legacy = support
+      .appendingPathComponent("Prompt Iteration Assistant", isDirectory: true)
+      .appendingPathComponent("Workspaces", isDirectory: true)
+      .appendingPathComponent("\(digest).db")
+    guard FileManager.default.fileExists(atPath: legacy.path) else { return }
+    try FileManager.default.createDirectory(
+      at: destination.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.copyItem(at: legacy, to: destination)
   }
 }
 
@@ -1483,6 +1624,7 @@ private struct DeepSeekSettingsView: View {
 struct ContentView: View {
   @ObservedObject var model: AppModel
   @Binding var page: WorkspacePage
+  let onVersionsChanged: () -> Void
   @State private var pendingDeletion: PromptSection?
   @State private var pendingHistoryEdit: VersionSummary?
   @State private var versionSearch = ""
@@ -1787,7 +1929,7 @@ struct ContentView: View {
         .buttonStyle(.borderedProminent)
         .disabled(model.isGeneratingPrompt)
         Button {
-          model.saveVersion()
+          if model.saveVersion() { onVersionsChanged() }
         } label: {
           if let feedback = model.versionSaveFeedback {
             Label(feedback, systemImage: "checkmark.circle.fill")

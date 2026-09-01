@@ -4,7 +4,7 @@
 
 ## 当前能力
 
-- 每次启动先进入本地工作区页面，可新建 Prompt、新建文件夹或打开文件夹。
+- 每次启动先进入本地工作区页面，可新建 Prompt 文件夹或打开工作区文件夹。
 - 工作区左侧是可收起的 Prompt 文件树，可新建和展开文件夹；普通目录和无关 Markdown 不会被扫入列表。
 - Prompt 文档可重命名、在 Finder 中显示或移到废纸篓。
 - 编辑、历史版本和设置是贯穿整个工作区的一级 Tab。
@@ -57,21 +57,21 @@ swift run PromptIterationAssistant
 swift run PromptIterationAssistant --db /tmp/prompt-iteration-demo.db
 ```
 
-正式稿保存在用户选择的 `.md` 文件中。每个文件对应的版本元数据位于：
+每个 Prompt 都是一个独立文件夹：`System Prompt.md` 是最新工作稿，历史快照按 `V4.md`、`V3.md` 这样的倒序存在同一文件夹。版本元数据位于：
 
 ```text
-~/Library/Application Support/Prompt Iteration Assistant/Workspaces/<文件路径哈希>.db
+<Prompt 文件夹>/.prompt-history/workspace.db
 ```
 
 也可使用 `PROMPT_ITERATION_DB` 指定位置。
 
 ## 第一阶段手工验收
 
-1. 启动应用，确认先出现“新建 Prompt / 新建文件夹 / 打开文件夹”三个入口。
-2. 新建 Prompt，确认生成一个带 12 个默认标题的 `.md` 文件；展开左侧子文件夹，测试文档重命名和移到废纸篓。
+1. 启动应用，确认先出现“新建 Prompt / 打开文件夹”两个入口。
+2. 新建 Prompt，确认生成 Prompt 文件夹和带 12 个默认标题的 `System Prompt.md`；展开后确认“最新版本”位于第一项。
 3. 首页初始确认只有一个 System Prompt 编辑框；填写内容后点击“AI 生成”。
 4. 确认生成完成后左侧出现只读 AI 参考稿，右侧保留可编辑 System Prompt 正式稿；交换左右位置后业务身份不变。
-5. 点击“保存为新版本”，再修改工作稿。
+5. 点击“保存为新版本”，确认按钮显示保存成功，左侧按 V4、V3、V2 倒序显示快照。
 6. 打开“历史版本”，搜索并选择旧版本，确认右侧以 Markdown 代码框显示完整 Prompt，复制图标位于代码框右上角。
 7. 点击“编辑”，确认左侧是只读历史版本，右侧是可编辑的待迭代工作稿。
 8. 隐藏一个栏目并复制完整 Prompt，确认该栏目未进入剪贴板。
