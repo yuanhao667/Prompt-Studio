@@ -689,12 +689,6 @@ struct ContentView: View {
               .foregroundStyle(.secondary)
           }
           Spacer()
-          Button {
-            model.copySelectedHistory()
-          } label: {
-            Image(systemName: "doc.on.doc")
-          }
-          .help("复制这个版本")
           Button("编辑") {
             if model.hasUnversionedChanges {
               pendingHistoryEdit = version
@@ -707,13 +701,45 @@ struct ContentView: View {
         .padding(14)
         Divider()
 
-        ScrollView {
-          Text(PromptMarkdown.render(model.selectedHistorySections))
-            .font(.system(.body, design: .monospaced))
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(18)
+        VStack(spacing: 0) {
+          HStack {
+            Text("Markdown")
+              .font(.caption.monospaced())
+              .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+              model.copySelectedHistory()
+            } label: {
+              Image(systemName: "doc.on.doc")
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("复制这个版本")
+          }
+          .frame(height: 40)
+          .padding(.horizontal, 8)
+          .padding(.leading, 5)
+          .background(Color(nsColor: .controlBackgroundColor))
+
+          Divider()
+
+          ScrollView {
+            Text(PromptMarkdown.render(model.selectedHistorySections))
+              .font(.system(.body, design: .monospaced))
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .topLeading)
+              .padding(16)
+          }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+          RoundedRectangle(cornerRadius: 10)
+            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        }
+        .padding(14)
       }
     } else {
       Text("从左侧选择一个版本")
