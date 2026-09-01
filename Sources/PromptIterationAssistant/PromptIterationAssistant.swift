@@ -407,13 +407,29 @@ struct AppRootView: View {
 
   private func openFolder() {
     let panel = NSOpenPanel()
-    panel.title = "打开 Prompt 文件夹"
-    panel.canChooseFiles = false
+    panel.title = "打开 Prompt 文件夹或 Markdown 文件"
+    panel.canChooseFiles = true
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = false
     panel.canCreateDirectories = true
+    panel.allowedContentTypes = [.folder, UTType(filenameExtension: "md")!]
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    openWorkspace(url)
+    var isDirectory: ObjCBool = false
+    FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+    if isDirectory.boolValue {
+      openWorkspace(url)
+      return
+    }
+
+    let promptFolder = url.deletingLastPathComponent()
+    let workspaceRoot = (try? isPromptFolder(promptFolder)) == true
+      ? promptFolder.deletingLastPathComponent() : promptFolder
+    if let number = versionNumber(from: url) {
+      openWorkspace(workspaceRoot)
+      openHistoryVersion(number, in: promptFolder)
+    } else {
+      openWorkspace(workspaceRoot, selecting: url)
+    }
   }
 
   private func createPromptFolder(in folderURL: URL) {
