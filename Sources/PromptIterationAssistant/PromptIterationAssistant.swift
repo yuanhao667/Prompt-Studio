@@ -160,25 +160,7 @@ struct AppRootView: View {
       .help(showsSidebar ? "收起文件列表" : "展开文件列表")
 
       Spacer()
-      Button { workspacePage = .editor } label: {
-        Image(systemName: "square.and.pencil")
-          .frame(width: 32, height: 32)
-          .background(Color(nsColor: .controlBackgroundColor), in: Circle())
-          .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
-      }
-      .buttonStyle(.plain)
-      .help("编辑")
-
       ControlGroup {
-        Button {
-          model?.addSection()
-          workspacePage = .editor
-        } label: {
-          Label("新增维度", systemImage: "plus")
-            .labelStyle(.iconOnly)
-        }
-        .help("新增维度")
-
         Button {
           guard let model else { return }
           if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -198,19 +180,6 @@ struct AppRootView: View {
         .disabled(model?.isGeneratingPrompt == true)
         .help("AI 生成")
 
-        Button {
-          if model?.saveVersion() == true, let folderURL { refreshFiles(in: folderURL) }
-        } label: {
-          Label(
-            model?.versionSaveFeedback ?? "保存新版本",
-            systemImage: model?.versionSaveFeedback == nil
-              ? "square.and.arrow.down" : "checkmark.circle.fill"
-          )
-          .labelStyle(.iconOnly)
-        }
-        .disabled(model?.versionSaveFeedback != nil)
-        .help(model?.versionSaveFeedback ?? "保存新版本")
-
         if model?.showsComparison == true {
           Button { model?.clearComparison() } label: {
             Label("收起对比", systemImage: "rectangle.compress.vertical")
@@ -219,11 +188,13 @@ struct AppRootView: View {
           .help("收起对比")
         }
 
-        Button { workspacePage = .settings } label: {
+        Button {
+          workspacePage = workspacePage == .settings ? .editor : .settings
+        } label: {
           Label("设置", systemImage: "gearshape")
             .labelStyle(.iconOnly)
         }
-        .help("设置")
+        .help(workspacePage == .settings ? "关闭设置" : "设置")
       }
       .controlSize(.large)
     }
@@ -390,6 +361,9 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
+          Button("保存新版本", systemImage: "doc.badge.plus") {
+            saveNewVersion(for: item.url)
+          }
           Button("加入对比", systemImage: "rectangle.split.2x1") {
             compareHistoryVersion(number, in: item.url.deletingLastPathComponent())
           }
@@ -672,6 +646,13 @@ struct AppRootView: View {
     } catch {
       launcherError = error.localizedDescription
     }
+  }
+
+  private func saveNewVersion(for documentURL: URL) {
+    if model?.documentURL?.standardizedFileURL != documentURL.standardizedFileURL {
+      openDocument(documentURL)
+    }
+    if model?.saveVersion() == true, let folderURL { refreshFiles(in: folderURL) }
   }
 
   private func beginRenaming(_ url: URL) {
@@ -2018,6 +1999,12 @@ struct ContentView: View {
                 Divider().padding(.vertical, 6)
               }
             }
+            Button("新增维度") { model.addSection() }
+              .buttonStyle(.plain)
+              .foregroundStyle(.blue)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 10)
+              .padding(.vertical, 12)
           }
           .padding(.horizontal, 10)
           .padding(.bottom, 10)
