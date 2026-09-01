@@ -436,6 +436,7 @@ struct ContentView: View {
   @State private var pendingHistoryEdit: VersionSummary?
   @State private var page: WorkspacePage = .editor
   @State private var versionSearch = ""
+  @State private var hoveredSectionID: String?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -777,22 +778,48 @@ struct ContentView: View {
           .font(.headline)
           .foregroundStyle(.blue)
         Spacer()
-        Button { model.copyFullPrompt() } label: {
-          Image(systemName: "doc.on.doc")
-        }
-        .help("复制完整 Prompt")
       }
-      ScrollView {
-        LazyVStack(spacing: 0) {
-          ForEach(workspace.sections) { section in
-            currentSectionEditor(section)
-            if section.id != workspace.sections.last?.id {
-              Divider().padding(.vertical, 6)
+
+      VStack(spacing: 0) {
+        HStack {
+          Text("Markdown")
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
+          Spacer()
+          Button { model.copyFullPrompt() } label: {
+            Image(systemName: "doc.on.doc")
+              .frame(width: 28, height: 28)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("复制完整 Prompt")
+        }
+        .frame(height: 40)
+        .padding(.horizontal, 8)
+        .padding(.leading, 5)
+        .background(Color(nsColor: .controlBackgroundColor))
+
+        Divider()
+
+        ScrollView {
+          LazyVStack(spacing: 0) {
+            ForEach(workspace.sections) { section in
+              currentSectionEditor(section)
+              if section.id != workspace.sections.last?.id {
+                Divider().padding(.vertical, 6)
+              }
             }
           }
+          .padding(.horizontal, 10)
+          .padding(.bottom, 10)
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color(nsColor: .textBackgroundColor))
+      .clipShape(RoundedRectangle(cornerRadius: 10))
+      .overlay {
+        RoundedRectangle(cornerRadius: 10)
+          .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
       }
     }
     .padding(12)
@@ -828,25 +855,48 @@ struct ContentView: View {
         )
           .font(.headline)
         Spacer()
-        if model.comparison != nil {
-          Button { model.copyComparisonPrompt() } label: {
-            Image(systemName: "doc.on.doc")
-          }
-          .help("复制完整候选")
-        }
       }
       if let comparison = model.comparison {
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(comparison.sections) { section in
-              comparisonSectionEditor(section, kind: comparison.kind)
-              if section.id != comparison.sections.last?.id {
-                Divider().padding(.vertical, 6)
+        VStack(spacing: 0) {
+          HStack {
+            Text("Markdown")
+              .font(.caption.monospaced())
+              .foregroundStyle(.secondary)
+            Spacer()
+            Button { model.copyComparisonPrompt() } label: {
+              Image(systemName: "doc.on.doc")
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("复制完整候选")
+          }
+          .frame(height: 40)
+          .padding(.horizontal, 8)
+          .padding(.leading, 5)
+          .background(Color(nsColor: .controlBackgroundColor))
+
+          Divider()
+
+          ScrollView {
+            LazyVStack(spacing: 0) {
+              ForEach(comparison.sections) { section in
+                comparisonSectionEditor(section, kind: comparison.kind)
+                if section.id != comparison.sections.last?.id {
+                  Divider().padding(.vertical, 6)
+                }
               }
             }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
           }
-          .padding(.horizontal, 10)
-          .padding(.bottom, 10)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+          RoundedRectangle(cornerRadius: 10)
+            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         }
       } else {
         VStack(spacing: 12) {
@@ -871,12 +921,17 @@ struct ContentView: View {
   }
 
   private func currentSectionEditor(_ section: PromptSection) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    let isHovered = hoveredSectionID == section.id
+    return VStack(alignment: .leading, spacing: 8) {
       HStack {
         Image(systemName: "line.3.horizontal")
           .foregroundStyle(.secondary)
+          .frame(width: isHovered ? 16 : 0)
+          .opacity(isHovered ? 1 : 0)
+          .clipped()
           .contentShape(Rectangle())
           .draggable(section.id)
+          .allowsHitTesting(isHovered)
           .help("上下拖动维度")
         Text("#")
           .font(.headline.monospaced())
@@ -922,6 +977,14 @@ struct ContentView: View {
     }
     .padding(.vertical, 10)
     .opacity(section.isIncluded ? 1 : 0.48)
+    .animation(.easeOut(duration: 0.14), value: isHovered)
+    .onHover { hovering in
+      if hovering {
+        hoveredSectionID = section.id
+      } else if hoveredSectionID == section.id {
+        hoveredSectionID = nil
+      }
+    }
     .dropDestination(for: String.self) { items, _ in
       guard let sourceID = items.first,
         model.workspace?.sections.contains(where: { $0.id == sourceID }) == true
