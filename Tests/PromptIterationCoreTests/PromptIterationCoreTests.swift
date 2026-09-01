@@ -39,7 +39,20 @@ final class PromptIterationCoreTests: XCTestCase {
     let markdown = PromptMarkdown.render(restored.sections)
     XCTAssertFalse(restored.sections[0].isIncluded)
     XCTAssertFalse(markdown.contains("隐藏内容"))
+    XCTAssertTrue(PromptMarkdown.renderAll(restored.sections).contains("隐藏内容"))
     XCTAssertTrue(markdown.contains("# \(restored.sections[1].title)\n保留内容"))
+  }
+
+  func testMarkdownRoundTripPreservesTitlesAndContent() {
+    var sections = PromptSection.defaults()
+    sections[0].content = "你是一名编辑"
+    sections[1].content = "优化这篇文章"
+
+    let restored = PromptMarkdown.parse(PromptMarkdown.render(sections))
+
+    XCTAssertEqual(restored.map(\.title), sections.map(\.title))
+    XCTAssertEqual(restored[0].content, "你是一名编辑")
+    XCTAssertEqual(restored[1].content, "优化这篇文章")
   }
 
   func testPartialApplyAndReject() throws {

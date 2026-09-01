@@ -52,8 +52,15 @@ public struct PromptSection: Identifiable, Equatable, Sendable {
 
 public enum PromptMarkdown {
   public static func render(_ sections: [PromptSection]) -> String {
+    renderSections(sections.filter(\.isIncluded))
+  }
+
+  public static func renderAll(_ sections: [PromptSection]) -> String {
+    renderSections(sections)
+  }
+
+  private static func renderSections(_ sections: [PromptSection]) -> String {
     sections
-      .filter(\.isIncluded)
       .compactMap { section in
         let title = section.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,6 +70,49 @@ public enum PromptMarkdown {
           .joined(separator: "\n")
       }
       .joined(separator: "\n\n")
+  }
+
+  public static func parse(_ markdown: String) -> [PromptSection] {
+    var parsed: [(title: String, content: [String])] = []
+    var currentTitle: String?
+    var currentContent: [String] = []
+
+    func appendCurrent() {
+      guard let currentTitle else { return }
+      parsed.append((currentTitle, currentContent))
+    }
+
+    for line in markdown.components(separatedBy: .newlines) {
+      let trimmed = line.trimmingCharacters(in: .whitespaces)
+      if trimmed.hasPrefix("#"), !trimmed.hasPrefix("##") {
+        let title = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+        if !title.isEmpty {
+          appendCurrent()
+          currentTitle = title
+          currentContent = []
+          continue
+        }
+      }
+      if currentTitle != nil { currentContent.append(line) }
+    }
+    appendCurrent()
+
+    if parsed.isEmpty {
+      var sections = PromptSection.defaults()
+      let content = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !content.isEmpty { sections[0].content = content }
+      return sections
+    }
+
+    return parsed.enumerated().map { index, item in
+      PromptSection(
+        id: UUID().uuidString.lowercased(),
+        title: item.title,
+        content: item.content.joined(separator: "\n")
+          .trimmingCharacters(in: .whitespacesAndNewlines),
+        position: index
+      )
+    }
   }
 }
 

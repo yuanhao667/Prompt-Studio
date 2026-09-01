@@ -4,19 +4,21 @@
 
 ## 当前能力
 
+- 每次启动先进入本地工作区页面，可新建 Prompt、新建文件夹或打开文件夹。
+- 正式稿直接读取并自动写回电脑里的 `.md` 文件；不同文件的历史数据彼此隔离。
 - 每个新 Prompt 都自动带出固定的 12 个默认维度标题，用户可继续增删改和排序。
 - 首页初始只显示一个完整的 Markdown Prompt 编辑框。
-- 点击“AI 生成”后才展开左右对照：左侧为只读 AI 参考稿，右侧为可编辑用户正式稿。
-- AI 参考稿可整段复制，用户可在正式稿中继续增删、排序、编排、粘贴和修改；两个完整 Prompt 仍可左右拖动。
+- 点击“AI 生成”后才展开左右对照：左侧为只读 AI 参考稿，右侧为可编辑 System Prompt 正式稿。
+- AI 参考稿可整段复制，System Prompt 正式稿可继续增删、排序、编排、粘贴和修改；两个完整 Prompt 仍可左右拖动。
 - 历史版本页支持搜索、Markdown 代码框预览和右上角一键复制。
 - 点击历史版本的“编辑”后，左侧固定显示只读历史版本，右侧从该版本创建待迭代工作稿。
-- 栏目可新增、删除、改名和排序；排序手柄只在悬停当前行时出现，AI 参考稿与用户正式稿共享栏目顺序。
-- 工作稿和候选状态实时保存到本地 SQLite；正式版本只在用户点击后生成。
+- 栏目可新增、删除、改名和排序；排序手柄只在悬停当前行时出现，AI 参考稿与 System Prompt 正式稿共享栏目顺序。
+- System Prompt 正式稿实时写入 `.md`；SQLite 只保存该文件对应的版本历史和对照元数据。
 - 完整 Prompt 使用 Markdown 一级标题复制，并排除被隐藏的栏目。
 - 设置页可配置 DeepSeek API Key、接口地址和模型，并执行连接测试。
 - API Key 只保存在当前 Mac 的系统 Keychain，接口地址和模型保存在本机偏好设置。
 
-当前 DeepSeek 设置和 Prompt 自动生成已完成；导入导出、Prompt 管理和 DMG 仍未接入。
+当前阶段以功能跑通为目标，不包含正式视觉设计、上线部署和 DMG 分发。
 
 ## 用 Xcode 开发
 
@@ -24,7 +26,7 @@
 - macOS 13 或更高版本（第一阶段临时基线，最终最低版本仍待产品确认）
 - Xcode 26.6 或更高版本
 
-双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行。按 `⌘U` 运行 6 项核心测试。
+双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行。按 `⌘U` 运行 7 项核心测试。
 
 命令行验证与 Xcode 使用同一个原生工程：
 
@@ -50,32 +52,20 @@ swift run PromptIterationAssistant
 swift run PromptIterationAssistant --db /tmp/prompt-iteration-demo.db
 ```
 
-默认数据库位于：
+正式稿保存在用户选择的 `.md` 文件中。每个文件对应的版本元数据位于：
 
 ```text
-~/Library/Application Support/Prompt Iteration Assistant/prompt-iteration.db
+~/Library/Application Support/Prompt Iteration Assistant/Workspaces/<文件路径哈希>.db
 ```
 
 也可使用 `PROMPT_ITERATION_DB` 指定位置。
 
-## 预览 API
-
-`PreviewAPI` 是一个不保存 Prompt 或 API Key 的无状态联调服务。它只用于验证部署和预留接口契约，不替代 PRD 规定的本地 App 直连 DeepSeek 方案。
-
-线上预览：https://s55a2810lfsogrqs2979l.apigateway-cn-beijing.volceapi.com/
-
-```bash
-cd PreviewAPI
-npm start
-curl http://localhost:8080/health
-```
-
 ## 第一阶段手工验收
 
-1. 启动应用，确认出现 12 个默认栏目。
-2. 在任一栏目输入内容，退出后重新启动，确认内容恢复。
-3. 首页初始确认只有一个用户 Prompt 编辑框；填写内容后点击“AI 生成”。
-4. 确认生成完成后左侧出现只读 AI 参考稿，右侧保留可编辑用户正式稿；交换左右位置后业务身份不变。
+1. 启动应用，确认先出现“新建 Prompt / 新建文件夹 / 打开文件夹”三个入口。
+2. 新建 Prompt，确认生成一个带 12 个默认标题的 `.md` 文件；编辑后用其他文本编辑器打开，确认内容已经写回。
+3. 首页初始确认只有一个 System Prompt 编辑框；填写内容后点击“AI 生成”。
+4. 确认生成完成后左侧出现只读 AI 参考稿，右侧保留可编辑 System Prompt 正式稿；交换左右位置后业务身份不变。
 5. 点击“保存为新版本”，再修改工作稿。
 6. 打开“历史版本”，搜索并选择旧版本，确认右侧以 Markdown 代码框显示完整 Prompt，复制图标位于代码框右上角。
 7. 点击“编辑”，确认左侧是只读历史版本，右侧是可编辑的待迭代工作稿。

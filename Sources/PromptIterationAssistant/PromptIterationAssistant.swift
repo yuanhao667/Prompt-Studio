@@ -1,26 +1,291 @@
 import AppKit
+import CryptoKit
 import PromptIterationCore
 import Security
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct PromptIterationAssistantApp: App {
-  @StateObject private var model = AppModel()
-
   var body: some Scene {
     WindowGroup {
-      ContentView(model: model)
+      AppRootView()
         .frame(minWidth: 1_080, minHeight: 700)
     }
     .windowStyle(.titleBar)
-    .commands {
-      CommandMenu("Prompt") {
-        Button("保存为新版本") { model.saveVersion() }
-          .keyboardShortcut("s", modifiers: [.command, .shift])
-        Button("复制完整 Prompt") { model.copyFullPrompt() }
-          .keyboardShortcut("c", modifiers: [.command, .shift])
+  }
+}
+
+struct AppRootView: View {
+  @State private var model: AppModel?
+  @State private var folderURL: URL?
+  @State private var markdownFiles: [URL] = []
+  @State private var launcherError: String?
+
+  var body: some View {
+    Group {
+      if let folderURL {
+        HSplitView {
+          folderSidebar(folderURL)
+            .frame(minWidth: 210, idealWidth: 230, maxWidth: 270)
+          if let model {
+            ContentView(model: model)
+          } else {
+            VStack(spacing: 12) {
+              Image(systemName: "doc.badge.plus")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+              Text("这个文件夹里还没有 Markdown Prompt")
+                .font(.headline)
+              Button("新建 Prompt") { createPrompt(in: folderURL) }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          }
+        }
+      } else {
+        launchPage
       }
     }
+    .alert(
+      "文件操作失败",
+      isPresented: Binding(
+        get: { launcherError != nil },
+        set: { if !$0 { launcherError = nil } }
+      )
+    ) {
+      Button("好") { launcherError = nil }
+    } message: {
+      Text(launcherError ?? "")
+    }
+  }
+
+  private var launchPage: some View {
+    VStack(spacing: 30) {
+      VStack(spacing: 8) {
+        Image(systemName: "text.document")
+          .font(.system(size: 46))
+          .foregroundStyle(.blue)
+        Text("Prompt 迭代助手")
+          .font(.largeTitle.bold())
+        Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
+          .foregroundStyle(.secondary)
+      }
+
+      HStack(spacing: 14) {
+        launchAction(
+          "新建 Prompt",
+          detail: "创建带固定标题模板的 .md 文件",
+          systemImage: "doc.badge.plus",
+          action: createStandalonePrompt
+        )
+        launchAction(
+          "新建文件夹",
+          detail: "创建本地文件夹和第一个 Prompt",
+          systemImage: "folder.badge.plus",
+          action: createFolder
+        )
+        launchAction(
+          "打开文件夹",
+          detail: "读取文件夹内已有的 .md 文件",
+          systemImage: "folder",
+          action: openFolder
+        )
+      }
+      .frame(maxWidth: 800)
+    }
+    .padding(40)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(nsColor: .windowBackgroundColor))
+  }
+
+  private func launchAction(
+    _ title: String,
+    detail: String,
+    systemImage: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      VStack(alignment: .leading, spacing: 12) {
+        Image(systemName: systemImage)
+          .font(.system(size: 28))
+          .foregroundStyle(.blue)
+        Text(title).font(.headline)
+        Text(detail)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.leading)
+      }
+      .padding(18)
+      .frame(maxWidth: .infinity, minHeight: 140, alignment: .topLeading)
+      .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+      .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
+    }
+    .buttonStyle(.plain)
+  }
+
+  private func folderSidebar(_ folderURL: URL) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(spacing: 8) {
+        Button {
+          model = nil
+          self.folderURL = nil
+          markdownFiles = []
+        } label: {
+          Image(systemName: "chevron.left")
+        }
+        .buttonStyle(.plain)
+        .help("返回启动页")
+        Image(systemName: "folder.fill").foregroundStyle(.blue)
+        Text(folderURL.lastPathComponent)
+          .font(.headline)
+          .lineLimit(1)
+        Spacer()
+        Button { createPrompt(in: folderURL) } label: {
+          Image(systemName: "plus")
+        }
+        .buttonStyle(.plain)
+        .help("在此文件夹新建 Prompt")
+      }
+      .padding(12)
+      Divider()
+
+      ScrollView {
+        LazyVStack(spacing: 4) {
+          ForEach(markdownFiles, id: \.path) { file in
+            Button { openDocument(file) } label: {
+              HStack(spacing: 8) {
+                Image(systemName: "doc.text")
+                Text(file.deletingPathExtension().lastPathComponent)
+                  .lineLimit(1)
+                Spacer()
+              }
+              .padding(.horizontal, 10)
+              .padding(.vertical, 8)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .background(
+                model?.documentURL?.standardizedFileURL == file.standardizedFileURL
+                  ? Color.blue.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7)
+              )
+            }
+            .buttonStyle(.plain)
+          }
+        }
+        .padding(8)
+      }
+      Spacer()
+      Text(folderURL.path)
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+        .lineLimit(2)
+        .padding(12)
+    }
+    .background(Color(nsColor: .controlBackgroundColor))
+  }
+
+  private func createStandalonePrompt() {
+    let panel = NSSavePanel()
+    panel.title = "新建 Prompt"
+    panel.nameFieldStringValue = "未命名 Prompt.md"
+    panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
+    panel.canCreateDirectories = true
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    createDocument(at: url.pathExtension.lowercased() == "md" ? url : url.appendingPathExtension("md"))
+  }
+
+  private func createFolder() {
+    let panel = NSSavePanel()
+    panel.title = "新建 Prompt 文件夹"
+    panel.nameFieldStringValue = "Prompt 项目"
+    panel.allowedContentTypes = [.folder]
+    panel.canCreateDirectories = true
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+      let promptURL = uniquePromptURL(in: url)
+      try writeDefaultPrompt(to: promptURL)
+      openWorkspace(url, selecting: promptURL)
+    } catch {
+      launcherError = error.localizedDescription
+    }
+  }
+
+  private func openFolder() {
+    let panel = NSOpenPanel()
+    panel.title = "打开 Prompt 文件夹"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = true
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    openWorkspace(url)
+  }
+
+  private func createPrompt(in folderURL: URL) {
+    let panel = NSSavePanel()
+    panel.title = "在文件夹中新建 Prompt"
+    panel.directoryURL = folderURL
+    panel.nameFieldStringValue = "未命名 Prompt.md"
+    panel.allowedContentTypes = [UTType(filenameExtension: "md")!]
+    panel.canCreateDirectories = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    createDocument(at: url.pathExtension.lowercased() == "md" ? url : url.appendingPathExtension("md"))
+  }
+
+  private func createDocument(at url: URL) {
+    do {
+      try writeDefaultPrompt(to: url)
+      openWorkspace(url.deletingLastPathComponent(), selecting: url)
+    } catch {
+      launcherError = error.localizedDescription
+    }
+  }
+
+  private func openWorkspace(_ url: URL, selecting selected: URL? = nil) {
+    folderURL = url
+    refreshFiles(in: url)
+    if let selected {
+      openDocument(selected)
+    } else if let first = markdownFiles.first {
+      openDocument(first)
+    } else {
+      model = nil
+    }
+  }
+
+  private func openDocument(_ url: URL) {
+    model = AppModel(documentURL: url)
+  }
+
+  private func refreshFiles(in folderURL: URL) {
+    do {
+      markdownFiles = try FileManager.default.contentsOfDirectory(
+        at: folderURL,
+        includingPropertiesForKeys: nil,
+        options: [.skipsHiddenFiles]
+      )
+      .filter { $0.pathExtension.lowercased() == "md" }
+      .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+    } catch {
+      launcherError = error.localizedDescription
+      markdownFiles = []
+    }
+  }
+
+  private func writeDefaultPrompt(to url: URL) throws {
+    try PromptMarkdown.renderAll(PromptSection.defaults())
+      .write(to: url, atomically: true, encoding: .utf8)
+  }
+
+  private func uniquePromptURL(in folderURL: URL) -> URL {
+    var number = 1
+    var url = folderURL.appendingPathComponent("未命名 Prompt.md")
+    while FileManager.default.fileExists(atPath: url.path) {
+      number += 1
+      url = folderURL.appendingPathComponent("未命名 Prompt \(number).md")
+    }
+    return url
   }
 }
 
@@ -45,14 +310,25 @@ final class AppModel: ObservableObject {
   @Published var isGeneratingPrompt = false
 
   let databaseURL: URL
+  let documentURL: URL?
   private var repository: WorkspaceRepository?
 
-  init() {
-    databaseURL = Self.databaseURLFromArguments()
+  init(documentURL: URL? = nil) {
+    self.documentURL = documentURL?.standardizedFileURL
+    databaseURL = Self.databaseURLFromArguments(documentURL: documentURL)
     do {
       let repository = try WorkspaceRepository(databaseURL: databaseURL)
       self.repository = repository
-      let workspace = try repository.loadOrCreateWorkspace()
+      var workspace = try repository.loadOrCreateWorkspace()
+      if let documentURL = self.documentURL {
+        let markdown = try String(contentsOf: documentURL, encoding: .utf8)
+        workspace.name = documentURL.deletingPathExtension().lastPathComponent
+        workspace.sections = Self.preserveSectionIDs(
+          parsed: PromptMarkdown.parse(markdown),
+          existing: workspace.sections
+        )
+        try repository.saveDraft(workspace)
+      }
       self.workspace = workspace
       comparison = try repository.loadComparison(projectID: workspace.id)
       versions = try repository.listVersions(projectID: workspace.id)
@@ -243,6 +519,7 @@ final class AppModel: ObservableObject {
         workspace: workspace,
         number: version.number
       )
+      if let restored = self.workspace { try saveMarkdownDraft(restored) }
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
       currentOnLeading = false
@@ -422,7 +699,7 @@ final class AppModel: ObservableObject {
     guard includedSections.contains(where: {
       !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }) else {
-      errorMessage = "请先在用户 Prompt 中写入内容。"
+      errorMessage = "请先在 System Prompt 中写入内容。"
       status = errorMessage ?? ""
       return
     }
@@ -507,7 +784,7 @@ final class AppModel: ObservableObject {
         currentOnLeading = false
         showsComparison = true
         isGeneratingPrompt = false
-        status = "AI 参考稿已生成，右侧用户正式稿可继续编排和修改"
+        status = "AI 参考稿已生成，右侧 System Prompt 正式稿可继续编排和修改"
       } catch {
         isGeneratingPrompt = false
         errorMessage = "AI 生成失败：\(error.localizedDescription)"
@@ -528,6 +805,7 @@ final class AppModel: ObservableObject {
     do {
       // ponytail: per-edit writes are enough for the single-user prototype; debounce if profiling shows UI stalls.
       try repository.saveDraft(workspace)
+      try saveMarkdownDraft(workspace)
       if markChanged { hasUnversionedChanges = true }
       status = "工作稿已自动保存"
     } catch { report(error) }
@@ -598,12 +876,52 @@ final class AppModel: ObservableObject {
     ) != workspace.sections
   }
 
-  private static func databaseURLFromArguments() -> URL {
+  private func saveMarkdownDraft(_ workspace: PromptWorkspace) throws {
+    guard let documentURL else { return }
+    try PromptMarkdown.renderAll(workspace.sections)
+      .write(to: documentURL, atomically: true, encoding: .utf8)
+  }
+
+  private static func preserveSectionIDs(
+    parsed: [PromptSection],
+    existing: [PromptSection]
+  ) -> [PromptSection] {
+    parsed.enumerated().map { index, section in
+      let existingSection = existing.indices.contains(index) && existing[index].title == section.title
+        ? existing[index] : nil
+      return PromptSection(
+        id: existingSection?.id ?? section.id,
+        title: section.title,
+        content: section.content,
+        position: index,
+        isIncluded: existingSection?.isIncluded ?? true
+      )
+    }
+  }
+
+  private static func databaseURLFromArguments(documentURL: URL?) -> URL {
     let arguments = ProcessInfo.processInfo.arguments
     if let index = arguments.firstIndex(of: "--db"), arguments.indices.contains(index + 1) {
       return URL(
         fileURLWithPath: NSString(string: arguments[index + 1]).expandingTildeInPath
       )
+    }
+    if let custom = ProcessInfo.processInfo.environment["PROMPT_ITERATION_DB"], !custom.isEmpty {
+      return URL(fileURLWithPath: NSString(string: custom).expandingTildeInPath)
+    }
+    if let documentURL {
+      let digest = SHA256.hash(data: Data(documentURL.standardizedFileURL.path.utf8))
+        .map { String(format: "%02x", $0) }
+        .joined()
+      let support =
+        FileManager.default.urls(
+          for: .applicationSupportDirectory,
+          in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+      return support
+        .appendingPathComponent("Prompt Iteration Assistant", isDirectory: true)
+        .appendingPathComponent("Workspaces", isDirectory: true)
+        .appendingPathComponent("\(digest).db")
     }
     return WorkspaceRepository.defaultDatabaseURL()
   }
@@ -925,7 +1243,7 @@ struct ContentView: View {
     VStack(spacing: 10) {
       HStack(spacing: 12) {
         TextField(
-          "Prompt 名称",
+          "System Prompt 名称",
           text: Binding(
             get: { model.workspace?.name ?? "" },
             set: model.updateName
@@ -1169,7 +1487,7 @@ struct ContentView: View {
             .foregroundStyle(.secondary)
             .contentShape(Rectangle())
             .draggable("prompt-pane-current")
-            .help("左右拖动用户 Prompt")
+            .help("左右拖动 System Prompt 正式稿")
           Spacer()
         }
       }
@@ -1177,7 +1495,7 @@ struct ContentView: View {
         Label(
           model.showsComparison && model.comparison?.kind == .history
             ? "待迭代版本"
-            : model.showsComparison ? "用户正式稿" : "用户 Prompt",
+            : model.showsComparison ? "System Prompt 正式稿" : "System Prompt",
           systemImage: "pencil.line"
         )
           .font(.headline)
@@ -1426,7 +1744,7 @@ struct ContentView: View {
       Image(systemName: "exclamationmark.triangle")
         .font(.system(size: 40))
       Text("工作台无法加载")
-      Text(model.errorMessage ?? "请检查本地数据库。")
+      Text(model.errorMessage ?? "请检查 Markdown 文件或本地版本数据。")
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1436,7 +1754,7 @@ struct ContentView: View {
     HStack {
       Text(model.status)
       Spacer()
-      Text("本地数据库：\(model.databaseURL.path)")
+      Text("Markdown 文件：\(model.documentURL?.path ?? "尚未选择")")
     }
     .font(.caption)
     .foregroundStyle(.secondary)
