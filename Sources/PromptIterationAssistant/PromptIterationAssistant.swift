@@ -64,7 +64,7 @@ struct AppRootView: View {
               ContentView(
                 model: model,
                 page: $workspacePage,
-                onVersionsChanged: { refreshFiles(in: folderURL) }
+                onRenamePrompt: renamePromptFolder
               )
             } else {
               VStack(spacing: 12) {
@@ -160,33 +160,76 @@ struct AppRootView: View {
       .help(showsSidebar ? "收起文件列表" : "展开文件列表")
 
       Spacer()
-      HStack(spacing: 4) {
-        ForEach([WorkspacePage.editor, WorkspacePage.settings]) { item in
-          let isSelected = workspacePage == item
-            || (item == .editor && workspacePage == .history)
-          Button { workspacePage = item } label: {
-            Label(item.rawValue, systemImage: item.systemImage)
-              .frame(minWidth: 88)
-              .padding(.horizontal, 8)
-              .padding(.vertical, 7)
-              .foregroundStyle(isSelected ? Color.white : Color.primary)
-              .background(
-                isSelected ? Color.accentColor : Color.clear,
-                in: Capsule()
-              )
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-        }
+      Button { workspacePage = .editor } label: {
+        Image(systemName: "square.and.pencil")
+          .frame(width: 32, height: 32)
+          .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+          .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
       }
-      .padding(3)
-      .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
-      Spacer()
+      .buttonStyle(.plain)
+      .help("编辑")
 
-      Color.clear.frame(width: 36, height: 36)
+      ControlGroup {
+        Button {
+          model?.addSection()
+          workspacePage = .editor
+        } label: {
+          Label("新增维度", systemImage: "plus")
+            .labelStyle(.iconOnly)
+        }
+        .help("新增维度")
+
+        Button {
+          guard let model else { return }
+          if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.status = "请先配置 DeepSeek API Key"
+            workspacePage = .settings
+          } else {
+            workspacePage = .editor
+            model.generatePrompt()
+          }
+        } label: {
+          Label(
+            model?.isGeneratingPrompt == true ? "生成中" : "AI 生成",
+            systemImage: model?.isGeneratingPrompt == true ? "hourglass" : "sparkles"
+          )
+          .labelStyle(.iconOnly)
+        }
+        .disabled(model?.isGeneratingPrompt == true)
+        .help("AI 生成")
+
+        Button {
+          if model?.saveVersion() == true, let folderURL { refreshFiles(in: folderURL) }
+        } label: {
+          Label(
+            model?.versionSaveFeedback ?? "保存新版本",
+            systemImage: model?.versionSaveFeedback == nil
+              ? "square.and.arrow.down" : "checkmark.circle.fill"
+          )
+          .labelStyle(.iconOnly)
+        }
+        .disabled(model?.versionSaveFeedback != nil)
+        .help(model?.versionSaveFeedback ?? "保存新版本")
+
+        if model?.showsComparison == true {
+          Button { model?.clearComparison() } label: {
+            Label("收起对比", systemImage: "rectangle.compress.vertical")
+              .labelStyle(.iconOnly)
+          }
+          .help("收起对比")
+        }
+
+        Button { workspacePage = .settings } label: {
+          Label("设置", systemImage: "gearshape")
+            .labelStyle(.iconOnly)
+        }
+        .help("设置")
+      }
+      .controlSize(.large)
     }
     .padding(.horizontal, 10)
-    .padding(.vertical, 4)
+    .padding(.top, -8)
+    .padding(.bottom, 2)
   }
 
   private var launchPage: some View {
@@ -347,7 +390,7 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
-          Button("与当前版本对比", systemImage: "rectangle.split.2x1") {
+          Button("加入对比", systemImage: "rectangle.split.2x1") {
             compareHistoryVersion(number, in: item.url.deletingLastPathComponent())
           }
           Button("基于此版本编辑", systemImage: "square.and.pencil") {
@@ -402,6 +445,9 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
+          Button("加入对比", systemImage: "rectangle.split.2x1") {
+            compareLatestVersion(in: item.url.deletingLastPathComponent())
+          }
           Button("重命名", systemImage: "pencil") { beginRenaming(item.url) }
           Button("在 Finder 中显示", systemImage: "folder") {
             NSWorkspace.shared.activateFileViewerSelecting([item.url])
@@ -504,6 +550,35 @@ struct AppRootView: View {
     }
   }
 
+  private func renamePromptFolder(to enteredName: String) {
+    guard let documentURL = model?.documentURL else { return }
+    let name = enteredName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else {
+      launcherError = "请输入有效的 Prompt 名称"
+      return
+    }
+
+    let source = documentURL.deletingLastPathComponent()
+    guard source.lastPathComponent != name else { return }
+    let destination = source.deletingLastPathComponent().appendingPathComponent(name)
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      launcherError = "同名 Prompt 已经存在"
+      return
+    }
+
+    do {
+      model = nil
+      try FileManager.default.moveItem(at: source, to: destination)
+      expandedFolderIDs.remove(source.standardizedFileURL.path)
+      expandedFolderIDs.insert(destination.standardizedFileURL.path)
+      if let folderURL { refreshFiles(in: folderURL) }
+      openDocument(destination.appendingPathComponent(documentURL.lastPathComponent))
+    } catch {
+      launcherError = error.localizedDescription
+      if FileManager.default.fileExists(atPath: documentURL.path) { openDocument(documentURL) }
+    }
+  }
+
   private func openWorkspace(_ url: URL, selecting selected: URL? = nil) {
     if selected == nil, (try? isPromptFolder(url)) == true,
       let files = try? FileManager.default.contentsOfDirectory(
@@ -580,6 +655,23 @@ struct AppRootView: View {
     guard let version = model?.selectedHistoryVersion else { return }
     model?.loadHistory(version)
     workspacePage = .editor
+  }
+
+  private func compareLatestVersion(in promptFolder: URL) {
+    do {
+      let numbers = try FileManager.default.contentsOfDirectory(
+        at: promptFolder,
+        includingPropertiesForKeys: nil,
+        options: [.skipsHiddenFiles]
+      ).compactMap(versionNumber).sorted(by: >)
+      guard numbers.count > 1 else {
+        launcherError = "至少保存两个版本后才能对比"
+        return
+      }
+      compareHistoryVersion(numbers[1], in: promptFolder)
+    } catch {
+      launcherError = error.localizedDescription
+    }
   }
 
   private func beginRenaming(_ url: URL) {
@@ -1602,20 +1694,10 @@ private enum DeepSeekKeychain {
   }
 }
 
-enum WorkspacePage: String, CaseIterable, Identifiable {
-  case editor = "编辑"
-  case history = "历史版本"
-  case settings = "设置"
-
-  var id: Self { self }
-
-  var systemImage: String {
-    switch self {
-    case .editor: return "square.and.pencil"
-    case .history: return "clock.arrow.circlepath"
-    case .settings: return "gearshape"
-    }
-  }
+enum WorkspacePage {
+  case editor
+  case history
+  case settings
 }
 
 private struct DeepSeekSettingsView: View {
@@ -1743,8 +1825,9 @@ private struct DeepSeekSettingsView: View {
 struct ContentView: View {
   @ObservedObject var model: AppModel
   @Binding var page: WorkspacePage
-  let onVersionsChanged: () -> Void
+  let onRenamePrompt: (String) -> Void
   @State private var pendingDeletion: PromptSection?
+  @State private var promptName = ""
   @State private var hoveredSectionID: String?
   @State private var sectionDropTargetID: String?
 
@@ -1881,65 +1964,36 @@ struct ContentView: View {
           Spacer()
         }
       }
-      HStack {
-        Label(
-          model.showsComparison && model.comparison?.kind == .history
-            ? "待迭代版本"
-            : model.showsComparison ? "System Prompt 正式稿" : "System Prompt",
-          systemImage: "pencil.line"
-        )
-          .font(.headline)
-          .foregroundStyle(.blue)
-        Spacer()
-        Button("新增维度") { model.addSection() }
-        if model.showsComparison {
-          Button {
-            model.clearComparison()
-          } label: {
-            Image(systemName: "rectangle.compress.vertical")
-              .frame(width: 28, height: 28)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .help("收起对照，返回单栏编辑")
-        }
-        Button {
-          if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.status = "请先配置 DeepSeek API Key"
-            page = .settings
-          } else {
-            model.generatePrompt()
-          }
-        } label: {
-          HStack(spacing: 7) {
-            if model.isGeneratingPrompt {
-              ProgressView().controlSize(.small)
-            } else {
-              Image(systemName: "sparkles")
-            }
-            Text(model.isGeneratingPrompt ? "生成中…" : "AI 生成")
-          }
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(model.isGeneratingPrompt)
-        Button {
-          if model.saveVersion() { onVersionsChanged() }
-        } label: {
-          if let feedback = model.versionSaveFeedback {
-            Label(feedback, systemImage: "checkmark.circle.fill")
-              .foregroundStyle(.green)
-          } else {
-            Text("保存新版本")
-          }
-        }
-        .disabled(model.versionSaveFeedback != nil)
-      }
 
       VStack(spacing: 0) {
-        HStack {
-          Text("Markdown")
-            .font(.caption.monospaced())
-            .foregroundStyle(.secondary)
+        HStack(spacing: 6) {
+          TextField("Prompt 名称", text: $promptName) { editing in
+            if !editing { onRenamePrompt(promptName) }
+          }
+          .textFieldStyle(.plain)
+          .font(.headline)
+          .foregroundStyle(.blue)
+          .frame(minWidth: 100, idealWidth: 180, maxWidth: 260)
+          .onAppear { promptName = workspace.name }
+          .onChange(of: model.documentURL) { _ in
+            promptName = model.workspace?.name ?? ""
+          }
+          .onSubmit { onRenamePrompt(promptName) }
+
+          if model.showsComparison, model.comparison?.kind == .history {
+            Text("V\(max(workspace.currentVersion, 1))")
+              .font(.headline.monospacedDigit())
+            Button {
+              model.clearComparison()
+              page = .history
+            } label: {
+              Image(systemName: "xmark")
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("关闭当前版本")
+          }
           Spacer()
           Button { model.copyFullPrompt() } label: {
             Image(systemName: "doc.on.doc")
@@ -2001,21 +2055,25 @@ struct ContentView: View {
           Spacer()
         }
       }
-      HStack {
-        Label(
-          model.comparison?.kind == .history ? model.comparisonTitle : "AI 参考稿",
-          systemImage: model.comparison?.kind == .history
-            ? "clock.arrow.circlepath" : "rectangle.split.2x1"
-        )
-          .font(.headline)
-        Spacer()
-      }
       if let comparison = model.comparison {
         VStack(spacing: 0) {
-          HStack {
-            Text("Markdown")
-              .font(.caption.monospaced())
-              .foregroundStyle(.secondary)
+          HStack(spacing: 6) {
+            Text(
+              comparison.kind == .history
+                ? "\(model.workspace?.name ?? "System") V\(comparison.sourceVersion ?? 1)"
+                : "AI 参考稿"
+            )
+            .font(.headline)
+            Button {
+              model.clearComparison()
+              page = .editor
+            } label: {
+              Image(systemName: "xmark")
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("关闭对比版本")
             Spacer()
             Button { model.copyComparisonPrompt() } label: {
               Image(systemName: "doc.on.doc")
@@ -2023,7 +2081,7 @@ struct ContentView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("复制完整 AI 参考稿")
+            .help("复制完整 Prompt")
           }
           .frame(height: 40)
           .padding(.horizontal, 8)
