@@ -5,7 +5,8 @@
 ## 当前能力
 
 - 每次启动先进入本地工作区页面，可新建 Prompt、新建文件夹或打开文件夹。
-- 工作区左侧是可收起的文件树，文件夹可展开，Markdown 文档可重命名、在 Finder 中显示或移到废纸篓。
+- 工作区左侧是可收起的 Prompt 文件树，可新建和展开文件夹；普通目录和无关 Markdown 不会被扫入列表。
+- Prompt 文档可重命名、在 Finder 中显示或移到废纸篓。
 - 编辑、历史版本和设置是贯穿整个工作区的一级 Tab。
 - 启动页右上角可直接进入 DeepSeek 设置，不需要先创建或打开 Prompt。
 - 正式稿直接读取并自动写回电脑里的 `.md` 文件；不同文件的历史数据彼此隔离。
@@ -29,7 +30,7 @@
 - macOS 13 或更高版本（第一阶段临时基线，最终最低版本仍待产品确认）
 - Xcode 26.6 或更高版本
 
-双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行。按 `⌘U` 运行 7 项核心测试。
+双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行。按 `⌘U` 运行 8 项核心测试。
 
 命令行验证与 Xcode 使用同一个原生工程：
 

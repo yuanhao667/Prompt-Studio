@@ -26,6 +26,7 @@ private struct WorkspaceItem: Identifiable {
 }
 
 struct AppRootView: View {
+  private static let workspaceMarkerName = ".prompt-iteration-folder"
   @State private var model: AppModel?
   @State private var launchSettingsModel: AppModel?
   @State private var folderURL: URL?
@@ -64,7 +65,6 @@ struct AppRootView: View {
           }
           VStack(spacing: 0) {
             workspaceNavigation
-            Divider()
             if let model {
               ContentView(model: model, page: $workspacePage)
             } else {
@@ -131,7 +131,10 @@ struct AppRootView: View {
     HStack(spacing: 12) {
       Button { showsSidebar.toggle() } label: {
         Image(systemName: "sidebar.leading")
-          .frame(width: 28, height: 28)
+          .font(.system(size: 18, weight: .semibold))
+          .frame(width: 40, height: 40)
+          .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+          .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
@@ -144,11 +147,11 @@ struct AppRootView: View {
             Label(item.rawValue, systemImage: item.systemImage)
               .frame(minWidth: 96)
               .padding(.horizontal, 10)
-              .padding(.vertical, 7)
+              .padding(.vertical, 9)
               .foregroundStyle(workspacePage == item ? Color.white : Color.primary)
               .background(
                 workspacePage == item ? Color.accentColor : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7)
+                in: Capsule()
               )
               .contentShape(Rectangle())
           }
@@ -156,10 +159,10 @@ struct AppRootView: View {
         }
       }
       .padding(3)
-      .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
+      .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
       Spacer()
 
-      Color.clear.frame(width: 28, height: 28)
+      Color.clear.frame(width: 40, height: 40)
     }
     .padding(.leading, showsSidebar ? 14 : 82)
     .padding(.trailing, 14)
@@ -258,13 +261,22 @@ struct AppRootView: View {
           .font(.headline)
           .lineLimit(1)
         Spacer()
-        Button { createPrompt(in: folderURL) } label: {
+        Menu {
+          Button("新建 Prompt", systemImage: "doc.badge.plus") {
+            createPrompt(in: folderURL)
+          }
+          Button("新建文件夹", systemImage: "folder.badge.plus") {
+            createPromptFolder(in: folderURL)
+          }
+        } label: {
           Image(systemName: "plus")
         }
-        .buttonStyle(.plain)
-        .help("在此文件夹新建 Prompt")
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("新建 Prompt 或文件夹")
       }
-      .padding(.leading, 82)
+      .padding(.leading, 72)
       .padding(.trailing, 12)
       .padding(.vertical, 12)
       Divider()
@@ -363,6 +375,7 @@ struct AppRootView: View {
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
       try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+      try markPromptFolder(url)
       let promptURL = uniquePromptURL(in: url)
       try writeDefaultPrompt(to: promptURL)
       openWorkspace(url, selecting: promptURL)
@@ -391,6 +404,23 @@ struct AppRootView: View {
     panel.canCreateDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
     createDocument(at: url.pathExtension.lowercased() == "md" ? url : url.appendingPathExtension("md"))
+  }
+
+  private func createPromptFolder(in folderURL: URL) {
+    let panel = NSSavePanel()
+    panel.title = "新建 Prompt 文件夹"
+    panel.directoryURL = folderURL
+    panel.nameFieldStringValue = "Prompt 文件夹"
+    panel.allowedContentTypes = [.folder]
+    panel.canCreateDirectories = true
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    do {
+      try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+      try markPromptFolder(url)
+      refreshFiles(in: folderURL)
+    } catch {
+      launcherError = error.localizedDescription
+    }
   }
 
   private func createDocument(at url: URL) {
@@ -508,9 +538,10 @@ struct AppRootView: View {
     .compactMap { url in
       let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
       if values.isDirectory == true, values.isSymbolicLink != true {
+        guard try isPromptFolder(url) else { return nil }
         return WorkspaceItem(url: url, children: try loadWorkspaceItems(in: url))
       }
-      return url.pathExtension.lowercased() == "md"
+      return isPromptDocument(url)
         ? WorkspaceItem(url: url, children: nil) : nil
     }
     .sorted {
@@ -524,6 +555,32 @@ struct AppRootView: View {
     items.flatMap { item in
       item.children.map(flattenedMarkdownFiles(in:)) ?? [item.url]
     }
+  }
+
+  private func isPromptFolder(_ url: URL) throws -> Bool {
+    if FileManager.default.fileExists(
+      atPath: url.appendingPathComponent(Self.workspaceMarkerName).path
+    ) {
+      return true
+    }
+    return try FileManager.default.contentsOfDirectory(
+      at: url,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+    ).contains(where: isPromptDocument)
+  }
+
+  private func isPromptDocument(_ url: URL) -> Bool {
+    guard url.pathExtension.lowercased() == "md" else { return false }
+    if FileManager.default.fileExists(atPath: AppModel.databaseURL(for: url).path) { return true }
+    guard let markdown = try? String(contentsOf: url, encoding: .utf8) else { return false }
+    return PromptMarkdown.isStructuredPrompt(markdown)
+  }
+
+  private func markPromptFolder(_ url: URL) throws {
+    let marker = url.appendingPathComponent(Self.workspaceMarkerName)
+    guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+    try Data().write(to: marker, options: .atomic)
   }
 
   private func writeDefaultPrompt(to url: URL) throws {

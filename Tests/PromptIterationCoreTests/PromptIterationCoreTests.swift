@@ -56,6 +56,12 @@ final class PromptIterationCoreTests: XCTestCase {
     XCTAssertEqual(restored[1].content, "优化这篇文章")
   }
 
+  func testStructuredPromptDetectionRejectsUnrelatedMarkdown() {
+    XCTAssertTrue(PromptMarkdown.isStructuredPrompt(PromptMarkdown.renderAll(PromptSection.defaults())))
+    XCTAssertFalse(PromptMarkdown.isStructuredPrompt("# README\n\n这是普通项目文档。"))
+    XCTAssertFalse(PromptMarkdown.isStructuredPrompt("没有标题的普通 Markdown"))
+  }
+
   func testPartialApplyAndReject() throws {
     var current = [
       PromptSection(id: "role", title: "角色", content: "原角色", position: 0),

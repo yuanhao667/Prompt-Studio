@@ -114,6 +114,17 @@ public enum PromptMarkdown {
       )
     }
   }
+
+  public static func isStructuredPrompt(_ markdown: String) -> Bool {
+    let defaultTitles = Set(PromptSection.defaults().map(\.title))
+    let headings: Set<String> = Set(markdown.components(separatedBy: .newlines).compactMap { line in
+      let trimmed = line.trimmingCharacters(in: .whitespaces)
+      guard trimmed.hasPrefix("#"), !trimmed.hasPrefix("##") else { return nil }
+      let title = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+      return title.isEmpty ? nil : title
+    })
+    return headings.intersection(defaultTitles).count >= 3
+  }
 }
 
 public enum ComparisonStatus: String, Sendable {
