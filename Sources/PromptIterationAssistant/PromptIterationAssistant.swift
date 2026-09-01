@@ -1869,6 +1869,8 @@ struct ContentView: View {
   @State private var promptName = ""
   @State private var hoveredSectionID: String?
   @State private var sectionDropTargetID: String?
+  @State private var currentPaneDropTargeted = false
+  @State private var comparisonPaneDropTargeted = false
 
   private var promptNameFieldWidth: CGFloat {
     let displayedName = promptName.isEmpty ? "Prompt 名称" : promptName
@@ -2004,6 +2006,7 @@ struct ContentView: View {
           Spacer()
           Image(systemName: "line.3.horizontal")
             .foregroundStyle(.secondary)
+            .frame(width: 96, height: 30)
             .contentShape(Rectangle())
             .draggable("prompt-pane-current")
             .help("左右拖动 System Prompt 正式稿")
@@ -2100,10 +2103,20 @@ struct ContentView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .contentShape(Rectangle())
+    .overlay {
+      if currentPaneDropTargeted {
+        RoundedRectangle(cornerRadius: 10)
+          .fill(Color.blue.opacity(0.1))
+          .allowsHitTesting(false)
+      }
+    }
     .dropDestination(for: String.self) { items, _ in
       guard items.contains("prompt-pane-comparison") else { return false }
       model.currentOnLeading.toggle()
       return true
+    } isTargeted: {
+      currentPaneDropTargeted = $0
     }
   }
 
@@ -2114,6 +2127,7 @@ struct ContentView: View {
           Spacer()
           Image(systemName: "line.3.horizontal")
             .foregroundStyle(.secondary)
+            .frame(width: 96, height: 30)
             .contentShape(Rectangle())
             .draggable("prompt-pane-comparison")
             .help("左右拖动 AI 生成 Prompt")
@@ -2187,10 +2201,20 @@ struct ContentView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .contentShape(Rectangle())
+    .overlay {
+      if comparisonPaneDropTargeted {
+        RoundedRectangle(cornerRadius: 10)
+          .fill(Color.blue.opacity(0.1))
+          .allowsHitTesting(false)
+      }
+    }
     .dropDestination(for: String.self) { items, _ in
       guard items.contains("prompt-pane-current") else { return false }
       model.currentOnLeading.toggle()
       return true
+    } isTargeted: {
+      comparisonPaneDropTargeted = $0
     }
   }
 
