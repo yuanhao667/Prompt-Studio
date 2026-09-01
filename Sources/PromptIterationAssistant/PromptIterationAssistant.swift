@@ -450,7 +450,7 @@ struct AppRootView: View {
         .menuIndicator(.hidden)
         .fixedSize()
       }
-      .padding(.horizontal, 2)
+      .padding(.leading, 2)
       .background(
         workspacePage == .history
           && model?.documentURL?.deletingLastPathComponent().standardizedFileURL
@@ -493,7 +493,7 @@ struct AppRootView: View {
         .menuIndicator(.hidden)
         .fixedSize()
       }
-      .padding(.horizontal, 2)
+      .padding(.leading, 2)
       .frame(maxWidth: .infinity)
       .background(
         workspacePage != .history
@@ -2451,7 +2451,7 @@ struct ContentView: View {
 
   private func currentSectionEditor(_ section: PromptSection) -> some View {
     let isHovered = hoveredSectionID == section.id
-    return VStack(alignment: .leading, spacing: 8) {
+    return VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 0) {
         ZStack {
           Color.clear
