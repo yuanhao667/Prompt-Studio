@@ -19,7 +19,7 @@ struct PromptIterationAssistantApp: App {
 
 private enum WorkspaceItemKind {
   case folder
-  case document
+  case document(Int)
   case version(Int)
 }
 
@@ -263,7 +263,7 @@ struct AppRootView: View {
         .buttonStyle(.plain)
         .help("新建 Prompt 文件夹")
       }
-      .padding(.leading, 72)
+      .padding(.leading, 12)
       .padding(.trailing, 12)
       .padding(.vertical, 12)
       Divider()
@@ -336,8 +336,8 @@ struct AppRootView: View {
               .padding(.vertical, 3)
               .foregroundStyle(.blue)
               .background(Color.blue.opacity(0.14), in: Capsule())
-            Text("历史版本")
-              .foregroundStyle(.secondary)
+            Text(item.url.deletingLastPathComponent().lastPathComponent)
+              .lineLimit(1)
             Spacer()
           }
           .padding(.leading, 8)
@@ -347,6 +347,9 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
+          Button("与当前版本对比", systemImage: "rectangle.split.2x1") {
+            compareHistoryVersion(number, in: item.url.deletingLastPathComponent())
+          }
           Button("基于此版本编辑", systemImage: "square.and.pencil") {
             editHistoryVersion(number, in: item.url.deletingLastPathComponent())
           }
@@ -375,20 +378,20 @@ struct AppRootView: View {
           ? Color.blue.opacity(0.12) : Color.clear,
         in: RoundedRectangle(cornerRadius: 7)
       )
-    } else {
+    } else if case let .document(number) = item.kind {
       HStack(spacing: 4) {
         Button {
           openDocument(item.url)
           workspacePage = .editor
         } label: {
           HStack(spacing: 8) {
-            Text("最新版本")
-              .font(.caption.bold())
+            Text("V\(number)")
+              .font(.caption.bold().monospacedDigit())
               .padding(.horizontal, 7)
               .padding(.vertical, 3)
               .foregroundStyle(.blue)
               .background(Color.blue.opacity(0.14), in: Capsule())
-            Text(item.url.deletingPathExtension().lastPathComponent)
+            Text(item.url.deletingLastPathComponent().lastPathComponent)
               .lineLimit(1)
             Spacer()
           }
@@ -572,6 +575,13 @@ struct AppRootView: View {
     }
   }
 
+  private func compareHistoryVersion(_ number: Int, in promptFolder: URL) {
+    openHistoryVersion(number, in: promptFolder)
+    guard let version = model?.selectedHistoryVersion else { return }
+    model?.loadHistory(version)
+    workspacePage = .editor
+  }
+
   private func beginRenaming(_ url: URL) {
     renameText = url.deletingPathExtension().lastPathComponent
     pendingRenameURL = url
@@ -663,16 +673,34 @@ struct AppRootView: View {
       let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
       if values.isDirectory == true, values.isSymbolicLink != true {
         guard try isPromptFolder(url) else { return nil }
+        let children = try loadWorkspaceItems(in: url, isRoot: false)
+        let latestVersion = children.compactMap { child in
+          if case let .version(number) = child.kind { return number }
+          return nil
+        }.max() ?? 1
         return WorkspaceItem(
           url: url,
           kind: .folder,
-          children: try loadWorkspaceItems(in: url, isRoot: false)
+          children: children.compactMap { child in
+            switch child.kind {
+            case .document:
+              return WorkspaceItem(
+                url: child.url,
+                kind: .document(latestVersion),
+                children: nil
+              )
+            case let .version(number) where number == latestVersion:
+              return nil
+            default:
+              return child
+            }
+          }
         )
       }
       guard !isRoot, isPromptDocument(url) else { return nil }
       return WorkspaceItem(
         url: url,
-        kind: versionNumber(from: url).map(WorkspaceItemKind.version) ?? .document,
+        kind: versionNumber(from: url).map(WorkspaceItemKind.version) ?? .document(0),
         children: nil
       )
     }
@@ -783,7 +811,7 @@ final class AppModel: ObservableObject {
       var workspace = try repository.loadOrCreateWorkspace()
       if let documentURL = self.documentURL {
         let markdown = try String(contentsOf: documentURL, encoding: .utf8)
-        workspace.name = documentURL.deletingPathExtension().lastPathComponent
+        workspace.name = documentURL.deletingLastPathComponent().lastPathComponent
         workspace.sections = Self.preserveSectionIDs(
           parsed: PromptMarkdown.parse(markdown),
           existing: workspace.sections
@@ -1729,8 +1757,6 @@ struct ContentView: View {
       } else {
         settingsPage
       }
-      Divider()
-      footer
     }
     .alert(
       "操作失败",
@@ -2193,15 +2219,4 @@ struct ContentView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  private var footer: some View {
-    HStack {
-      Spacer()
-      Text("Markdown 文件：\(model.documentURL?.path ?? "尚未选择")")
-    }
-    .font(.caption)
-    .foregroundStyle(.secondary)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 7)
-    .background(.bar)
-  }
 }
