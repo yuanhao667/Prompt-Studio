@@ -2549,10 +2549,8 @@ struct ContentView: View {
   private func comparisonSectionEditor(_ section: ComparisonSection) -> some View {
     let isIncluded = model.workspace?.sections.first(where: { $0.id == section.sectionID })?
       .isIncluded ?? true
-    let mirrorsHover = hoveredSectionID == section.sectionID
     return VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 0) {
-        Color.clear.frame(width: mirrorsHover ? 32 : 0, height: 32)
         Text("#")
           .font(.headline.monospaced())
           .foregroundStyle(.blue)
@@ -2588,7 +2586,6 @@ struct ContentView: View {
     }
     .padding(.vertical, 10)
     .opacity(isIncluded ? 1 : 0.48)
-    .animation(.easeOut(duration: 0.14), value: mirrorsHover)
     .overlay(alignment: .top) {
       if sectionDropTargetID == section.sectionID {
         Rectangle()
