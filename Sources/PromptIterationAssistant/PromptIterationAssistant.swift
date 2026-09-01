@@ -205,15 +205,13 @@ struct AppRootView: View {
   }
 
   private var launchPage: some View {
-    VStack(spacing: 30) {
-      VStack(spacing: 8) {
-        Image(systemName: "text.document")
-          .font(.system(size: 46))
-          .foregroundStyle(.blue)
+    VStack(alignment: .leading, spacing: 30) {
+      VStack(alignment: .leading, spacing: 8) {
         Text("Prompt 迭代助手")
           .font(.largeTitle.bold())
         Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
           .foregroundStyle(.secondary)
+          .multilineTextAlignment(.leading)
       }
 
       HStack(spacing: 14) {
@@ -232,8 +230,10 @@ struct AppRootView: View {
       }
       .frame(maxWidth: 800)
     }
-    .padding(40)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .padding(.horizontal, 40)
+    .padding(.top, 64)
+    .padding(.bottom, 40)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(Color(nsColor: .windowBackgroundColor))
   }
 
