@@ -234,7 +234,7 @@ struct AppRootView: View {
   }
 
   private var launchPage: some View {
-    VStack(alignment: .leading, spacing: 30) {
+    VStack(alignment: .leading, spacing: 24) {
       VStack(alignment: .leading, spacing: 8) {
         Text("Prompt 迭代助手")
           .font(.largeTitle.bold())
@@ -243,7 +243,7 @@ struct AppRootView: View {
           .multilineTextAlignment(.leading)
       }
 
-      HStack(spacing: 14) {
+      HStack(alignment: .top, spacing: 16) {
         launchAction(
           "新建 Prompt",
           detail: "创建 Prompt 文件夹和 System Prompt.md",
@@ -257,10 +257,10 @@ struct AppRootView: View {
           action: openFolder
         )
       }
-      .frame(maxWidth: 800)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
     .padding(.horizontal, 40)
-    .padding(.top, 64)
+    .padding(.top, 52)
     .padding(.bottom, 40)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     .background(Color(nsColor: .windowBackgroundColor))
@@ -289,6 +289,7 @@ struct AppRootView: View {
       .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
     }
     .buttonStyle(.plain)
+    .frame(maxWidth: .infinity)
   }
 
   private func folderSidebar(_ folderURL: URL) -> some View {
