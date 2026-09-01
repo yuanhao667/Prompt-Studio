@@ -146,7 +146,7 @@ struct AppRootView: View {
       Button { showsSidebar.toggle() } label: {
         Image(systemName: "sidebar.leading")
           .font(.system(size: 18, weight: .semibold))
-          .frame(width: 40, height: 40)
+          .frame(width: 36, height: 36)
           .background(Color(nsColor: .controlBackgroundColor), in: Circle())
           .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
           .contentShape(Rectangle())
@@ -159,9 +159,9 @@ struct AppRootView: View {
         ForEach(WorkspacePage.allCases) { item in
           Button { workspacePage = item } label: {
             Label(item.rawValue, systemImage: item.systemImage)
-              .frame(minWidth: 96)
-              .padding(.horizontal, 10)
-              .padding(.vertical, 9)
+              .frame(minWidth: 88)
+              .padding(.horizontal, 8)
+              .padding(.vertical, 7)
               .foregroundStyle(workspacePage == item ? Color.white : Color.primary)
               .background(
                 workspacePage == item ? Color.accentColor : Color.clear,
@@ -176,11 +176,10 @@ struct AppRootView: View {
       .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
       Spacer()
 
-      Color.clear.frame(width: 40, height: 40)
+      Color.clear.frame(width: 36, height: 36)
     }
-    .padding(.leading, showsSidebar ? 14 : 82)
-    .padding(.trailing, 14)
-    .padding(.vertical, 8)
+    .padding(.horizontal, 10)
+    .padding(.vertical, 4)
   }
 
   private var launchPage: some View {
@@ -253,17 +252,6 @@ struct AppRootView: View {
   private func folderSidebar(_ folderURL: URL) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(spacing: 8) {
-        Button {
-          model = nil
-          self.folderURL = nil
-          markdownFiles = []
-          workspaceItems = []
-          workspacePage = .editor
-        } label: {
-          Image(systemName: "chevron.left")
-        }
-        .buttonStyle(.plain)
-        .help("返回启动页")
         Image(systemName: "folder.fill").foregroundStyle(.blue)
         Text(folderURL.lastPathComponent)
           .font(.headline)
@@ -1518,80 +1506,85 @@ private struct DeepSeekSettingsView: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 22) {
+      VStack(alignment: .leading, spacing: 0) {
         VStack(alignment: .leading, spacing: 6) {
-          Text("设置")
-            .font(.largeTitle.bold())
-          Text("配置应用直连 DeepSeek 所需的本地凭证。")
+          Text("DeepSeek")
+            .font(.title2.bold())
+          Text("配置 API 后，即可在编辑页直接生成 Prompt。")
             .foregroundStyle(.secondary)
         }
+        .padding(.bottom, 20)
 
-        GroupBox {
-          Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 16) {
-            GridRow {
+        Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 18) {
+          GridRow {
+            VStack(alignment: .leading, spacing: 3) {
               Text("API Key")
-                .frame(width: 90, alignment: .trailing)
-              HStack(spacing: 8) {
-                if revealsAPIKey {
-                  TextField("sk-…", text: $model.deepSeekAPIKey)
-                    .textFieldStyle(.roundedBorder)
-                } else {
-                  SecureField("sk-…", text: $model.deepSeekAPIKey)
-                    .textFieldStyle(.roundedBorder)
-                }
-                Button {
-                  revealsAPIKey.toggle()
-                } label: {
-                  Image(systemName: revealsAPIKey ? "eye.slash" : "eye")
-                    .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .help(revealsAPIKey ? "隐藏 API Key" : "显示 API Key")
-              }
+              Text("仅保存在本机 Keychain")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-
-            GridRow {
-              Text("接口地址")
-                .frame(width: 90, alignment: .trailing)
-              TextField("https://api.deepseek.com", text: $model.deepSeekBaseURL)
-                .textFieldStyle(.roundedBorder)
-            }
-
-            GridRow {
-              Text("模型")
-                .frame(width: 90, alignment: .trailing)
-              Picker(
-                "模型",
-                selection: Binding(
-                  get: { model.deepSeekModel },
-                  set: model.selectDeepSeekModel
-                )
-              ) {
-                Text("DeepSeek V4 Flash").tag("deepseek-v4-flash")
-                Text("DeepSeek V4 Pro").tag("deepseek-v4-pro")
+            .frame(width: 150, alignment: .leading)
+            HStack(spacing: 8) {
+              if revealsAPIKey {
+                TextField("sk-…", text: $model.deepSeekAPIKey)
+                  .textFieldStyle(.roundedBorder)
+              } else {
+                SecureField("sk-…", text: $model.deepSeekAPIKey)
+                  .textFieldStyle(.roundedBorder)
               }
-              .pickerStyle(.segmented)
-              .labelsHidden()
+              Button {
+                revealsAPIKey.toggle()
+              } label: {
+                Image(systemName: revealsAPIKey ? "eye.slash" : "eye")
+                  .frame(width: 24, height: 24)
+              }
+              .buttonStyle(.plain)
+              .help(revealsAPIKey ? "隐藏 API Key" : "显示 API Key")
             }
           }
-          .padding(10)
-        } label: {
-          Label("DeepSeek API", systemImage: "network")
-            .font(.headline)
+
+          Divider().gridCellColumns(2)
+
+          GridRow {
+            VStack(alignment: .leading, spacing: 3) {
+              Text("模型")
+              Text("点击切换生成模型")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .frame(width: 150, alignment: .leading)
+            Picker(
+              "模型",
+              selection: Binding(
+                get: { model.deepSeekModel },
+                set: model.selectDeepSeekModel
+              )
+            ) {
+              Text("V4 Flash").tag("deepseek-v4-flash")
+              Text("V4 Pro").tag("deepseek-v4-pro")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+          }
+
+          Divider().gridCellColumns(2)
+
+          GridRow {
+            VStack(alignment: .leading, spacing: 3) {
+              Text("接口地址")
+              Text("默认使用 DeepSeek 官方地址")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .frame(width: 150, alignment: .leading)
+            TextField("https://api.deepseek.com", text: $model.deepSeekBaseURL)
+              .textFieldStyle(.roundedBorder)
+          }
         }
+
+        Divider().padding(.vertical, 20)
 
         HStack(spacing: 10) {
-          Button("保存配置") { model.saveDeepSeekSettings() }
-            .buttonStyle(.borderedProminent)
-          Button("测试连接") { model.testDeepSeekConnection() }
-            .disabled(model.isTestingDeepSeek)
-          if model.isTestingDeepSeek {
-            ProgressView()
-              .controlSize(.small)
-          }
-        }
-
-        HStack(alignment: .top, spacing: 10) {
           Image(
             systemName: model.deepSeekConnectionSucceeded == true
               ? "checkmark.circle.fill"
@@ -1604,18 +1597,26 @@ private struct DeepSeekSettingsView: View {
               : model.deepSeekConnectionSucceeded == false ? Color.orange : Color.secondary
           )
           Text(model.deepSeekConnectionMessage)
+            .font(.callout)
+            .lineLimit(1)
+          if model.isTestingDeepSeek {
+            ProgressView().controlSize(.small)
+          }
+          Spacer()
+          Button("测试连接") { model.testDeepSeekConnection() }
+            .disabled(model.isTestingDeepSeek)
+          Button("保存") { model.saveDeepSeekSettings() }
+            .buttonStyle(.borderedProminent)
         }
-        .font(.callout)
 
-        VStack(alignment: .leading, spacing: 8) {
-          Label("API Key 只保存在这台 Mac 的系统 Keychain 中。", systemImage: "lock.fill")
-          Label("连接测试不会上传 Prompt，只验证当前密钥能否访问模型列表。", systemImage: "checkmark.shield")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        Text("连接测试只验证密钥和模型是否可用，不会上传 Prompt。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.top, 10)
       }
-      .frame(maxWidth: 720, alignment: .leading)
-      .padding(32)
+      .frame(maxWidth: 700, alignment: .leading)
+      .padding(.horizontal, 28)
+      .padding(.vertical, 20)
       .frame(maxWidth: .infinity, alignment: .top)
     }
   }
