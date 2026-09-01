@@ -975,7 +975,6 @@ final class AppModel: ObservableObject {
   @Published var versions: [VersionSummary] = []
   @Published var selectedHistoryVersion: VersionSummary?
   @Published var selectedHistorySections: [PromptSection] = []
-  @Published var currentOnLeading = false
   @Published var showsComparison = false
   @Published var hasUnversionedChanges = false
   @Published var autosaveStatus = "已自动保存"
@@ -1179,7 +1178,6 @@ final class AppModel: ObservableObject {
       )
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
-      currentOnLeading = false
       showsComparison = true
       status = "已将 V\(version.number) 调入对比区"
     } catch { report(error) }
@@ -1230,7 +1228,6 @@ final class AppModel: ObservableObject {
       }
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
-      currentOnLeading = false
       showsComparison = true
       hasUnversionedChanges = true
       status = "正在基于 V\(version.number) 编辑下一版"
@@ -1507,7 +1504,6 @@ final class AppModel: ObservableObject {
       return
     }
     comparison = snapshot
-    currentOnLeading = false
     showsComparison = true
     isGeneratingPrompt = true
     status = "AI 参考稿正在生成（0/\(includedSections.count)）"
@@ -2009,8 +2005,6 @@ struct ContentView: View {
   @State private var promptName = ""
   @State private var hoveredSectionID: String?
   @State private var sectionDropTargetID: String?
-  @State private var currentPaneDropTargeted = false
-  @State private var comparisonPaneDropTargeted = false
   @State private var isPreviewingPrompt = false
 
   private var promptNameFieldWidth: CGFloat {
@@ -2087,16 +2081,8 @@ struct ContentView: View {
           .padding(14)
       } else {
         HStack(alignment: .top, spacing: 12) {
-          if model.comparison?.kind == .history {
-            comparisonPane
-            currentPane(workspace)
-          } else if model.currentOnLeading {
-            currentPane(workspace)
-            comparisonPane
-          } else {
-            comparisonPane
-            currentPane(workspace)
-          }
+          comparisonPane
+          currentPane(workspace)
         }
         .padding(14)
       }
@@ -2231,22 +2217,6 @@ struct ContentView: View {
 
   private func currentPane(_ workspace: PromptWorkspace) -> some View {
     VStack(alignment: .leading, spacing: 10) {
-      if model.showsComparison,
-        let comparison = model.comparison,
-        comparison.kind != .history
-      {
-        HStack {
-          Spacer()
-          Image(systemName: "line.3.horizontal")
-            .foregroundStyle(.secondary)
-            .frame(width: 96, height: 30)
-            .contentShape(Rectangle())
-            .draggable("prompt-pane-current")
-            .help("左右拖动 System Prompt 正式稿")
-          Spacer()
-        }
-      }
-
       VStack(spacing: 0) {
         HStack(spacing: 6) {
           TextField("Prompt 名称", text: $promptName) { editing in
@@ -2368,37 +2338,10 @@ struct ContentView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .contentShape(Rectangle())
-    .overlay {
-      if currentPaneDropTargeted {
-        RoundedRectangle(cornerRadius: 10)
-          .fill(Color.blue.opacity(0.1))
-          .allowsHitTesting(false)
-      }
-    }
-    .dropDestination(for: String.self) { items, _ in
-      guard items.contains("prompt-pane-comparison") else { return false }
-      model.currentOnLeading.toggle()
-      return true
-    } isTargeted: {
-      currentPaneDropTargeted = $0
-    }
   }
 
   private var comparisonPane: some View {
     VStack(alignment: .leading, spacing: 10) {
-      if model.comparison?.kind != .history {
-        HStack {
-          Spacer()
-          Image(systemName: "line.3.horizontal")
-            .foregroundStyle(.secondary)
-            .frame(width: 96, height: 30)
-            .contentShape(Rectangle())
-            .draggable("prompt-pane-comparison")
-            .help("左右拖动 AI 生成 Prompt")
-          Spacer()
-        }
-      }
       if let comparison = model.comparison {
         VStack(spacing: 0) {
           HStack(spacing: 6) {
@@ -2482,21 +2425,6 @@ struct ContentView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .contentShape(Rectangle())
-    .overlay {
-      if comparisonPaneDropTargeted {
-        RoundedRectangle(cornerRadius: 10)
-          .fill(Color.blue.opacity(0.1))
-          .allowsHitTesting(false)
-      }
-    }
-    .dropDestination(for: String.self) { items, _ in
-      guard items.contains("prompt-pane-current") else { return false }
-      model.currentOnLeading.toggle()
-      return true
-    } isTargeted: {
-      comparisonPaneDropTargeted = $0
-    }
   }
 
   private func comparisonMarkdown(_ sections: [ComparisonSection]) -> String {
@@ -2617,6 +2545,17 @@ struct ContentView: View {
           .padding(.trailing, 10)
         Text(section.title).font(.headline)
         Spacer()
+        if model.comparison?.kind == .manual {
+          Button("应用") {
+            model.applyComparison(sectionID: section.sectionID)
+          }
+          .buttonStyle(.plain)
+          .foregroundStyle(.blue)
+          .padding(.horizontal, 8)
+          .frame(height: 28)
+          .contentShape(Rectangle())
+          .disabled(section.content.isEmpty)
+        }
       }
       .frame(minHeight: 36)
       if model.isGeneratingPrompt, isIncluded, section.content.isEmpty {
