@@ -172,50 +172,18 @@ struct AppRootView: View {
       .help(showsSidebar ? "收起文件列表" : "展开文件列表")
 
       Spacer()
-      HStack(spacing: 8) {
-        ControlGroup {
-          Button {
-            guard let model else { return }
-            if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-              model.status = "请先配置 DeepSeek API Key"
-              workspacePage = .settings
-            } else {
-              workspacePage = .editor
-              model.generatePrompt()
-            }
-          } label: {
-            Label(
-              model?.isGeneratingPrompt == true ? "生成中" : "AI 生成",
-              systemImage: model?.isGeneratingPrompt == true ? "hourglass" : "sparkles"
-            )
-            .labelStyle(.iconOnly)
-          }
-          .disabled(model?.isGeneratingPrompt == true)
-          .help("AI 生成")
-
-          if model?.showsComparison == true {
-            Button { model?.clearComparison() } label: {
-              Label("收起对比", systemImage: "rectangle.compress.vertical")
-                .labelStyle(.iconOnly)
-            }
-            .help("收起对比")
-          }
-        }
-        .controlSize(.large)
-
-        Button {
-          workspacePage = workspacePage == .settings ? .editor : .settings
-        } label: {
-          Image(systemName: "gearshape")
-            .font(.system(size: 18, weight: .semibold))
-            .frame(width: 36, height: 36)
-            .background(Color(nsColor: .controlBackgroundColor), in: Circle())
-            .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(workspacePage == .settings ? "关闭设置" : "设置")
+      Button {
+        workspacePage = workspacePage == .settings ? .editor : .settings
+      } label: {
+        Image(systemName: "gearshape")
+          .font(.system(size: 18, weight: .semibold))
+          .frame(width: 36, height: 36)
+          .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+          .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
+          .contentShape(Rectangle())
       }
+      .buttonStyle(.plain)
+      .help(workspacePage == .settings ? "关闭设置" : "设置")
     }
     .padding(.horizontal, 10)
     .padding(.top, -24)
@@ -2055,6 +2023,22 @@ struct ContentView: View {
             .help("关闭当前版本")
           }
           Spacer()
+          Button {
+            if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+              model.status = "请先配置 DeepSeek API Key"
+              page = .settings
+            } else {
+              model.generatePrompt()
+            }
+          } label: {
+            Image(systemName: model.isGeneratingPrompt ? "hourglass" : "sparkles")
+              .frame(width: 28, height: 28)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .disabled(model.isGeneratingPrompt)
+          .help(model.isGeneratingPrompt ? "生成中" : "AI 生成")
+
           Button { model.copyFullPrompt() } label: {
             Image(systemName: "doc.on.doc")
               .frame(width: 28, height: 28)
