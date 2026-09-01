@@ -16,7 +16,7 @@
 - 栏目可新增、删除、改名和排序；排序手柄只在悬停当前行时出现，AI 参考稿与 System Prompt 正式稿共享栏目顺序。
 - System Prompt 正式稿实时写入 `.md`；SQLite 只保存该文件对应的版本历史和对照元数据。
 - 完整 Prompt 使用 Markdown 一级标题复制，并排除被隐藏的栏目。
-- 设置页可配置 DeepSeek API Key、接口地址和模型，并执行连接测试。
+- 设置页可点击切换 DeepSeek V4 Flash / V4 Pro，并分别验证所选模型是否可用。
 - API Key 只保存在当前 Mac 的系统 Keychain，接口地址和模型保存在本机偏好设置。
 
 当前阶段以功能跑通为目标，不包含正式视觉设计、上线部署和 DMG 分发。

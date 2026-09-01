@@ -327,7 +327,7 @@ final class AppModel: ObservableObject {
   @Published var errorMessage: String?
   @Published var deepSeekAPIKey = ""
   @Published var deepSeekBaseURL = "https://api.deepseek.com"
-  @Published var deepSeekModel = "deepseek-chat"
+  @Published var deepSeekModel = "deepseek-v4-flash"
   @Published var isTestingDeepSeek = false
   @Published var deepSeekConnectionSucceeded: Bool?
   @Published var deepSeekConnectionMessage = "尚未配置"
@@ -376,8 +376,10 @@ final class AppModel: ObservableObject {
 
     deepSeekBaseURL = UserDefaults.standard.string(forKey: "deepseek.baseURL")
       ?? "https://api.deepseek.com"
-    deepSeekModel = UserDefaults.standard.string(forKey: "deepseek.model")
-      ?? "deepseek-chat"
+    let storedModel = UserDefaults.standard.string(forKey: "deepseek.model")
+    deepSeekModel = storedModel.flatMap {
+      Self.supportedDeepSeekModels.contains($0) ? $0 : nil
+    } ?? "deepseek-v4-flash"
     do {
       deepSeekAPIKey = try DeepSeekKeychain.load() ?? ""
       if !deepSeekAPIKey.isEmpty {
@@ -404,6 +406,13 @@ final class AppModel: ObservableObject {
     case .manual: return "AI 生成结果"
     case .history: return "历史版本 V\(comparison.sourceVersion ?? 0)"
     }
+  }
+
+  func selectDeepSeekModel(_ model: String) {
+    guard Self.supportedDeepSeekModels.contains(model) else { return }
+    deepSeekModel = model
+    deepSeekConnectionSucceeded = nil
+    deepSeekConnectionMessage = "已切换模型，请保存或测试连接"
   }
 
   func updateName(_ name: String) {
@@ -465,7 +474,8 @@ final class AppModel: ObservableObject {
         let source = workspace.sections.firstIndex(where: { $0.id == sectionID }),
         let destination = workspace.sections.firstIndex(where: { $0.id == targetID })
       else { return }
-      workspace.sections.swapAt(source, destination)
+      let section = workspace.sections.remove(at: source)
+      workspace.sections.insert(section, at: min(destination, workspace.sections.count))
       normalize(&workspace.sections)
     }
     syncManualComparisonStructure()
@@ -650,9 +660,9 @@ final class AppModel: ObservableObject {
       status = deepSeekConnectionMessage
       return false
     }
-    guard !model.isEmpty else {
+    guard Self.supportedDeepSeekModels.contains(model) else {
       deepSeekConnectionSucceeded = false
-      deepSeekConnectionMessage = "请填写模型名称"
+      deepSeekConnectionMessage = "请选择受支持的 DeepSeek 模型"
       status = deepSeekConnectionMessage
       return false
     }
@@ -703,10 +713,14 @@ final class AppModel: ObservableObject {
             message: message
           )
         }
+        let models = try JSONDecoder().decode(DeepSeekModelsResponse.self, from: data)
+        guard models.data.contains(where: { $0.id == deepSeekModel }) else {
+          throw DeepSeekConfigurationError.modelUnavailable(deepSeekModel)
+        }
 
         isTestingDeepSeek = false
         deepSeekConnectionSucceeded = true
-        deepSeekConnectionMessage = "连接成功，API Key 可以使用"
+        deepSeekConnectionMessage = "连接成功，所选模型可以使用"
         status = "DeepSeek 连接测试成功"
       } catch {
         isTestingDeepSeek = false
@@ -885,6 +899,11 @@ final class AppModel: ObservableObject {
     return message
   }
 
+  private static let supportedDeepSeekModels = [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+  ]
+
   private static func hasChanges(
     workspace: PromptWorkspace,
     repository: WorkspaceRepository
@@ -954,6 +973,7 @@ final class AppModel: ObservableObject {
 private enum DeepSeekConfigurationError: LocalizedError {
   case invalidResponse
   case incompletePrompt
+  case modelUnavailable(String)
   case requestFailed(statusCode: Int, message: String?)
 
   var errorDescription: String? {
@@ -962,6 +982,8 @@ private enum DeepSeekConfigurationError: LocalizedError {
       return "服务器返回了无法识别的响应"
     case .incompletePrompt:
       return "AI 返回的栏目不完整，请重新生成"
+    case .modelUnavailable(let model):
+      return "当前 API Key 无法使用模型 \(model)"
     case let .requestFailed(statusCode, message):
       if let message, !message.isEmpty {
         return "HTTP \(statusCode)：\(message)"
@@ -969,6 +991,11 @@ private enum DeepSeekConfigurationError: LocalizedError {
       return "HTTP \(statusCode)"
     }
   }
+}
+
+private struct DeepSeekModelsResponse: Decodable {
+  struct Model: Decodable { let id: String }
+  let data: [Model]
 }
 
 private struct DeepSeekPromptSection: Encodable {
@@ -1103,8 +1130,18 @@ private struct DeepSeekSettingsView: View {
             GridRow {
               Text("模型")
                 .frame(width: 90, alignment: .trailing)
-              TextField("deepseek-chat", text: $model.deepSeekModel)
-                .textFieldStyle(.roundedBorder)
+              Picker(
+                "模型",
+                selection: Binding(
+                  get: { model.deepSeekModel },
+                  set: model.selectDeepSeekModel
+                )
+              ) {
+                Text("DeepSeek V4 Flash").tag("deepseek-v4-flash")
+                Text("DeepSeek V4 Pro").tag("deepseek-v4-pro")
+              }
+              .pickerStyle(.segmented)
+              .labelsHidden()
             }
           }
           .padding(10)
@@ -1161,6 +1198,7 @@ struct ContentView: View {
   @State private var page: WorkspacePage = .editor
   @State private var versionSearch = ""
   @State private var hoveredSectionID: String?
+  @State private var sectionDropTargetID: String?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -1677,19 +1715,23 @@ struct ContentView: View {
   private func currentSectionEditor(_ section: PromptSection) -> some View {
     let isHovered = hoveredSectionID == section.id
     return VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: isHovered ? 8 : 0) {
-        Image(systemName: "line.3.horizontal")
-          .foregroundStyle(.secondary)
-          .frame(width: isHovered ? 16 : 0)
+      HStack(spacing: 0) {
+        ZStack {
+          Color.clear
+          Image(systemName: "line.3.horizontal")
+            .foregroundStyle(.secondary)
+        }
+          .frame(width: isHovered ? 32 : 0, height: 32)
+          .contentShape(Rectangle())
           .opacity(isHovered ? 1 : 0)
           .clipped()
-          .contentShape(Rectangle())
           .draggable(section.id)
           .allowsHitTesting(isHovered)
           .help("上下拖动维度")
         Text("#")
           .font(.headline.monospaced())
           .foregroundStyle(.blue)
+          .padding(.trailing, 10)
         TextField(
           "维度名称",
           text: Binding(
@@ -1701,21 +1743,29 @@ struct ContentView: View {
         )
         .font(.headline)
         .textFieldStyle(.plain)
-        Button {
-          model.toggleSectionInclusion(section.id)
-        } label: {
-          Image(systemName: section.isIncluded ? "eye" : "eye.slash")
+        HStack(spacing: 6) {
+          Button {
+            model.toggleSectionInclusion(section.id)
+          } label: {
+            Image(systemName: section.isIncluded ? "eye" : "eye.slash")
+              .frame(width: 30, height: 30)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help(section.isIncluded ? "从复制中隐藏" : "加入复制")
+          Button(role: .destructive) {
+            pendingDeletion = section
+          } label: {
+            Image(systemName: "trash")
+              .frame(width: 30, height: 30)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("删除维度")
         }
-        .buttonStyle(.plain)
-        .help(section.isIncluded ? "从复制中隐藏" : "加入复制")
-        Button(role: .destructive) {
-          pendingDeletion = section
-        } label: {
-          Image(systemName: "trash")
-        }
-        .buttonStyle(.plain)
-        .help("删除维度")
+        .padding(.leading, 8)
       }
+      .frame(minHeight: 36)
       TextEditor(
         text: Binding(
           get: {
@@ -1727,7 +1777,7 @@ struct ContentView: View {
       .font(.system(.body, design: .monospaced))
       .scrollContentBackground(.hidden)
       .frame(minHeight: 100)
-      .padding(.leading, 42)
+      .padding(.leading, isHovered ? 47 : 15)
     }
     .padding(.vertical, 10)
     .opacity(section.isIncluded ? 1 : 0.48)
@@ -1739,36 +1789,61 @@ struct ContentView: View {
         hoveredSectionID = nil
       }
     }
+    .overlay(alignment: .top) {
+      if sectionDropTargetID == section.id {
+        Rectangle()
+          .fill(Color.accentColor)
+          .frame(height: 2)
+      }
+    }
     .dropDestination(for: String.self) { items, _ in
       guard let sourceID = items.first,
         model.workspace?.sections.contains(where: { $0.id == sourceID }) == true
       else { return false }
       model.moveSection(sourceID, to: section.id)
+      sectionDropTargetID = nil
       return true
+    } isTargeted: { isTargeted in
+      if isTargeted {
+        sectionDropTargetID = section.id
+      } else if sectionDropTargetID == section.id {
+        sectionDropTargetID = nil
+      }
     }
   }
 
   private func comparisonSectionEditor(_ section: ComparisonSection) -> some View {
     let isIncluded = model.workspace?.sections.first(where: { $0.id == section.sectionID })?
       .isIncluded ?? true
+    let mirrorsHover = hoveredSectionID == section.sectionID
     return VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Color.clear.frame(width: 16, height: 16)
+      HStack(spacing: 0) {
+        Color.clear.frame(width: mirrorsHover ? 32 : 0, height: 32)
         Text("#")
           .font(.headline.monospaced())
           .foregroundStyle(.blue)
+          .padding(.trailing, 10)
         Text(section.title).font(.headline)
         Spacer()
       }
+      .frame(minHeight: 36)
       Text(section.content.isEmpty ? "该栏目无内容" : section.content)
         .font(.system(.body, design: .monospaced))
         .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
-        .padding(.leading, 42)
+        .padding(.leading, mirrorsHover ? 52 : 20)
     }
     .padding(.vertical, 10)
     .opacity(isIncluded ? 1 : 0.48)
+    .animation(.easeOut(duration: 0.14), value: mirrorsHover)
+    .overlay(alignment: .top) {
+      if sectionDropTargetID == section.sectionID {
+        Rectangle()
+          .fill(Color.accentColor)
+          .frame(height: 2)
+      }
+    }
   }
 
   private var emptyState: some View {
