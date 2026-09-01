@@ -346,8 +346,8 @@ struct AppRootView: View {
 
                 Menu {
                   Button("重命名", systemImage: "pencil") { beginRenaming(folder.url) }
-                  Button("添加子文件", systemImage: "doc.badge.plus") {
-                    createPromptDocument(in: folder.url)
+                  Button("创建新版本", systemImage: "doc.badge.plus") {
+                    saveNewVersion(in: folder.url)
                   }
                   Button("在访达中显示", systemImage: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([folder.url])
@@ -573,18 +573,6 @@ struct AppRootView: View {
     }
   }
 
-  private func createPromptDocument(in promptFolderURL: URL) {
-    do {
-      let promptURL = uniquePromptURL(in: promptFolderURL)
-      try writeDefaultPrompt(to: promptURL)
-      if let folderURL { refreshFiles(in: folderURL) }
-      openDocument(promptURL)
-      workspacePage = .editor
-    } catch {
-      launcherError = error.localizedDescription
-    }
-  }
-
   private func renamePromptFolder(to enteredName: String) {
     guard let documentURL = model?.documentURL else { return }
     renameFolder(documentURL.deletingLastPathComponent(), to: enteredName)
@@ -708,6 +696,9 @@ struct AppRootView: View {
     if model?.documentURL?.standardizedFileURL != documentURL.standardizedFileURL {
       openDocument(documentURL)
     }
+    // The working draft is presented as V1 before an immutable snapshot exists.
+    // Preserve that baseline first so "创建新版本" always advances to V2 or later.
+    if model?.versions.isEmpty == true, model?.saveVersion() != true { return }
     if model?.saveVersion() == true, let folderURL { refreshFiles(in: folderURL) }
   }
 
@@ -848,12 +839,15 @@ struct AppRootView: View {
           if case let .version(number) = child.kind { return number }
           return nil
         }.max() ?? 1
+        var includedWorkingDocument = false
         return WorkspaceItem(
           url: url,
           kind: .folder,
           children: children.compactMap { child in
             switch child.kind {
             case .document:
+              guard !includedWorkingDocument else { return nil }
+              includedWorkingDocument = true
               return WorkspaceItem(
                 url: child.url,
                 kind: .document(latestVersion),
@@ -954,6 +948,7 @@ final class AppModel: ObservableObject {
   @Published var hasUnversionedChanges = false
   @Published var autosaveStatus = "已自动保存"
   @Published var versionSaveFeedback: String?
+  @Published var copyFeedback: String?
   @Published var status = "就绪"
   @Published var errorMessage: String?
   @Published var deepSeekAPIKey = ""
@@ -1037,6 +1032,12 @@ final class AppModel: ObservableObject {
     case .manual: return "AI 生成结果"
     case .history: return "历史版本 V\(comparison.sourceVersion ?? 0)"
     }
+  }
+
+  var lastEditedAt: Date? {
+    guard let documentURL else { return nil }
+    return try? documentURL.resourceValues(forKeys: [.contentModificationDateKey])
+      .contentModificationDate
   }
 
   func selectDeepSeekModel(_ model: String) {
@@ -1150,7 +1151,7 @@ final class AppModel: ObservableObject {
   func copySelectedHistory() {
     guard let version = selectedHistoryVersion else { return }
     copy(PromptMarkdown.render(selectedHistorySections))
-    status = "已复制历史版本 V\(version.number)"
+    showCopyFeedback("已复制 V\(version.number)")
   }
 
   @discardableResult
@@ -1316,6 +1317,7 @@ final class AppModel: ObservableObject {
     guard let workspace else { return }
     copy(PromptMarkdown.render(workspace.sections))
     let count = workspace.sections.filter(\.isIncluded).count
+    showCopyFeedback("复制成功")
     status = "已复制 Markdown Prompt，共 \(count) 个维度"
   }
 
@@ -1332,6 +1334,7 @@ final class AppModel: ObservableObject {
       )
     }
     copy(PromptMarkdown.render(sections))
+    showCopyFeedback("复制成功")
     status = "已复制 Markdown 候选 Prompt"
   }
 
@@ -1435,8 +1438,29 @@ final class AppModel: ObservableObject {
     guard saveDeepSeekSettings() else { return }
     guard let endpoint = URL(string: "\(deepSeekBaseURL)/chat/completions") else { return }
 
+    var snapshot = ComparisonSnapshot(
+      kind: .manual,
+      sourceVersion: nil,
+      sections: workspace.sections.map { section in
+        ComparisonSection(
+          sectionID: section.id,
+          title: section.title,
+          content: "",
+          position: section.position
+        )
+      }
+    )
+    do {
+      try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
+    } catch {
+      report(error)
+      return
+    }
+    comparison = snapshot
+    currentOnLeading = false
+    showsComparison = true
     isGeneratingPrompt = true
-    status = "DeepSeek 正在优化 Prompt…"
+    status = "AI 参考稿正在生成（0/\(includedSections.count)）"
 
     Task {
       do {
@@ -1455,63 +1479,82 @@ final class AppModel: ObservableObject {
               "role": "system",
               "content": """
                 你是 Prompt 优化助手。优化每个栏目中的内容，但不得增加、删除、改名或调整栏目顺序。
-                只返回合法 JSON，格式必须是 {"sections":[{"id":"原 id","content":"优化后的内容"}]}。
-                每个输入 id 必须原样返回一次，不要输出 Markdown 代码围栏或其他说明。
+                按输入顺序逐个返回栏目，每完成一个栏目就立即输出一行独立 JSON：
+                {"id":"原 id","content":"优化后的内容"}
+                这是 NDJSON，不要输出数组、Markdown 代码围栏、前言或总结。每个输入 id 必须原样返回一次。
                 """,
             ],
             ["role": "user", "content": inputJSON],
           ],
-          "response_format": ["type": "json_object"],
-          "stream": false,
+          "stream": true,
         ]
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 60
+        request.timeoutInterval = 180
         request.setValue("Bearer \(deepSeekAPIKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let response = response as? HTTPURLResponse else {
           throw DeepSeekConfigurationError.invalidResponse
         }
         guard (200...299).contains(response.statusCode) else {
+          var data = Data()
+          for try await byte in bytes { data.append(byte) }
           throw DeepSeekConfigurationError.requestFailed(
             statusCode: response.statusCode,
             message: Self.deepSeekErrorMessage(from: data)
           )
         }
 
-        let chat = try JSONDecoder().decode(DeepSeekChatResponse.self, from: data)
-        guard let content = chat.choices.first?.message.content,
-          let generatedData = content.data(using: .utf8)
-        else { throw DeepSeekConfigurationError.invalidResponse }
-        let generated = try JSONDecoder().decode(DeepSeekGeneratedPrompt.self, from: generatedData)
-        let generatedByID = Dictionary(
-          generated.sections.map { ($0.id, $0.content) },
-          uniquingKeysWith: { _, latest in latest }
-        )
-        guard includedSections.allSatisfy({ generatedByID[$0.id] != nil }) else {
-          throw DeepSeekConfigurationError.incompletePrompt
+        var generatedBuffer = ""
+        var generatedCount = 0
+
+        @MainActor
+        func consumeGeneratedLine(_ rawLine: String) throws {
+          let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+          guard !line.isEmpty, !line.hasPrefix("```") else { return }
+          guard generatedCount < includedSections.count,
+            let data = line.data(using: .utf8),
+            let generated = try? JSONDecoder().decode(DeepSeekGeneratedSection.self, from: data),
+            generated.id == includedSections[generatedCount].id,
+            let snapshotIndex = snapshot.sections.firstIndex(where: {
+              $0.sectionID == generated.id
+            })
+          else { throw DeepSeekConfigurationError.incompletePrompt }
+
+          snapshot.sections[snapshotIndex].content = generated.content
+          generatedCount += 1
+          try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
+          comparison = snapshot
+          status = "AI 参考稿正在生成（\(generatedCount)/\(includedSections.count)）"
         }
 
-        let snapshot = ComparisonSnapshot(
-          kind: .manual,
-          sourceVersion: nil,
-          sections: workspace.sections.map { section in
-            ComparisonSection(
-              sectionID: section.id,
-              title: section.title,
-              content: generatedByID[section.id] ?? "",
-              position: section.position
-            )
+        for try await streamLine in bytes.lines {
+          let line = streamLine.trimmingCharacters(in: .whitespacesAndNewlines)
+          guard line.hasPrefix("data:") else { continue }
+          let payload = String(line.dropFirst(5))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+          if payload == "[DONE]" { break }
+          guard let payloadData = payload.data(using: .utf8),
+            let chunk = try? JSONDecoder().decode(DeepSeekStreamChunk.self, from: payloadData),
+            let delta = chunk.choices.first?.delta.content
+          else { continue }
+
+          generatedBuffer += delta
+          while let newline = generatedBuffer.firstIndex(of: "\n") {
+            let generatedLine = String(generatedBuffer[..<newline])
+            generatedBuffer = String(generatedBuffer[generatedBuffer.index(after: newline)...])
+            try consumeGeneratedLine(generatedLine)
           }
-        )
-        try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
-        comparison = snapshot
-        currentOnLeading = false
-        showsComparison = true
+        }
+
+        try consumeGeneratedLine(generatedBuffer)
+        guard generatedCount == includedSections.count else {
+          throw DeepSeekConfigurationError.incompletePrompt
+        }
         isGeneratingPrompt = false
         status = "AI 参考稿已生成，右侧 System Prompt 正式稿可继续编排和修改"
       } catch {
@@ -1578,6 +1621,15 @@ final class AppModel: ObservableObject {
   private func copy(_ text: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
+  }
+
+  private func showCopyFeedback(_ feedback: String) {
+    copyFeedback = feedback
+    status = feedback
+    Task {
+      try? await Task.sleep(nanoseconds: 1_600_000_000)
+      if copyFeedback == feedback { copyFeedback = nil }
+    }
   }
 
   private func report(_ error: Error) {
@@ -1735,22 +1787,18 @@ private struct DeepSeekPromptSection: Encodable {
   let content: String
 }
 
-private struct DeepSeekChatResponse: Decodable {
+private struct DeepSeekStreamChunk: Decodable {
   struct Choice: Decodable {
-    struct Message: Decodable { let content: String }
-    let message: Message
+    struct Delta: Decodable { let content: String? }
+    let delta: Delta
   }
 
   let choices: [Choice]
 }
 
-private struct DeepSeekGeneratedPrompt: Decodable {
-  struct Section: Decodable {
-    let id: String
-    let content: String
-  }
-
-  let sections: [Section]
+private struct DeepSeekGeneratedSection: Decodable {
+  let id: String
+  let content: String
 }
 
 enum WorkspacePage {
@@ -1959,6 +2007,21 @@ struct ContentView: View {
     } message: {
       Text("该栏目会从当前工作稿和手动候选中删除；已保存的正式版本不受影响。")
     }
+    .overlay(alignment: .top) {
+      if let feedback = model.copyFeedback {
+        Label(feedback, systemImage: "checkmark.circle.fill")
+          .font(.callout.weight(.medium))
+          .foregroundStyle(.green)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 9)
+          .background(.regularMaterial, in: Capsule())
+          .overlay(Capsule().stroke(.separator))
+          .shadow(radius: 6, y: 2)
+          .padding(.top, 14)
+          .transition(.move(edge: .top).combined(with: .opacity))
+      }
+    }
+    .animation(.easeInOut(duration: 0.18), value: model.copyFeedback)
     .onChange(of: model.documentURL) { _ in isPreviewingPrompt = false }
   }
 
@@ -2073,9 +2136,10 @@ struct ContentView: View {
           }
           .onSubmit { onRenamePrompt(promptName) }
 
+          Text("V\(max(model.versions.map(\.number).max() ?? workspace.currentVersion, 1))")
+            .font(.headline.monospacedDigit())
+
           if model.showsComparison, model.comparison?.kind == .history {
-            Text("V\(max(workspace.currentVersion, 1))")
-              .font(.headline.monospacedDigit())
             Button {
               model.clearComparison()
               page = .history
@@ -2165,6 +2229,13 @@ struct ContentView: View {
       .overlay {
         RoundedRectangle(cornerRadius: 10)
           .stroke(Color.blue, lineWidth: 2)
+      }
+
+      if let lastEditedAt = model.lastEditedAt {
+        Text("最后编辑时间：\(formattedLastEdited(lastEditedAt))")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.leading, 2)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2353,6 +2424,13 @@ struct ContentView: View {
         .padding(.leading, 8)
       }
       .frame(minHeight: 36)
+      .onHover { hovering in
+        if hovering {
+          hoveredSectionID = section.id
+        } else if hoveredSectionID == section.id {
+          hoveredSectionID = nil
+        }
+      }
       TextEditor(
         text: Binding(
           get: {
@@ -2364,18 +2442,10 @@ struct ContentView: View {
       .font(.system(.body, design: .monospaced))
       .scrollContentBackground(.hidden)
       .frame(minHeight: 100)
-      .padding(.leading, isHovered ? 32 : 0)
     }
     .padding(.vertical, 10)
     .opacity(section.isIncluded ? 1 : 0.48)
     .animation(.easeOut(duration: 0.14), value: isHovered)
-    .onHover { hovering in
-      if hovering {
-        hoveredSectionID = section.id
-      } else if hoveredSectionID == section.id {
-        hoveredSectionID = nil
-      }
-    }
     .overlay(alignment: .top) {
       if sectionDropTargetID == section.id {
         Rectangle()
@@ -2414,12 +2484,19 @@ struct ContentView: View {
         Spacer()
       }
       .frame(minHeight: 36)
-      Text(section.content.isEmpty ? "该栏目无内容" : section.content)
-        .font(.system(.body, design: .monospaced))
-        .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
-        .textSelection(.enabled)
+      if model.isGeneratingPrompt, isIncluded, section.content.isEmpty {
+        HStack(spacing: 8) {
+          ProgressView().controlSize(.small)
+          Text("正在生成…").foregroundStyle(.secondary)
+        }
         .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
-        .padding(.leading, mirrorsHover ? 32 : 0)
+      } else {
+        Text(section.content.isEmpty ? "该栏目无内容" : section.content)
+          .font(.system(.body, design: .monospaced))
+          .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+      }
     }
     .padding(.vertical, 10)
     .opacity(isIncluded ? 1 : 0.48)
@@ -2442,6 +2519,13 @@ struct ContentView: View {
         .foregroundStyle(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private func formattedLastEdited(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "zh_CN")
+    formatter.dateFormat = "yyyy年M月d日 ah:mm"
+    return formatter.string(from: date)
   }
 
 }
