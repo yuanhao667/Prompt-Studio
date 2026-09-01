@@ -290,10 +290,6 @@ private final class SQLiteStatement {
     return String(cString: pointer)
   }
 
-  func optionalText(_ column: Int32) -> String? {
-    sqlite3_column_type(statement, column) == SQLITE_NULL ? nil : text(column)
-  }
-
   func int(_ column: Int32) -> Int { Int(sqlite3_column_int64(statement, column)) }
   func optionalInt(_ column: Int32) -> Int? {
     sqlite3_column_type(statement, column) == SQLITE_NULL ? nil : int(column)

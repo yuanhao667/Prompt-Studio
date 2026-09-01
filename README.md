@@ -22,7 +22,7 @@
 - System Prompt 正式稿实时写入 `.md`；SQLite 只保存该文件对应的版本历史和对照元数据。
 - 完整 Prompt 使用 Markdown 一级标题复制，并排除被隐藏的栏目。
 - 设置页可点击切换 DeepSeek V4 Flash / V4 Pro，并分别验证所选模型是否可用。
-- API Key 只保存在当前 Mac 的系统 Keychain，接口地址和模型保存在本机偏好设置。
+- API Key、接口地址和模型只保存在当前 Mac 的应用偏好设置中，不写入 Prompt 文件或 App 包。
 
 当前阶段以功能跑通为目标，不包含正式视觉设计、上线部署和 DMG 分发。
 
@@ -32,7 +32,7 @@
 - macOS 13 或更高版本（第一阶段临时基线，最终最低版本仍待产品确认）
 - Xcode 26.6 或更高版本
 
-双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行。按 `⌘U` 运行 8 项核心测试。
+双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行。按 `⌘U` 运行 9 项核心测试。
 
 命令行验证与 Xcode 使用同一个原生工程：
 

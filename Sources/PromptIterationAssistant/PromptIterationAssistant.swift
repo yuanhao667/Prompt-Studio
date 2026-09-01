@@ -977,10 +977,7 @@ final class AppModel: ObservableObject {
   @Published var selectedHistorySections: [PromptSection] = []
   @Published var showsComparison = false
   @Published var hasUnversionedChanges = false
-  @Published var autosaveStatus = "已自动保存"
-  @Published var versionSaveFeedback: String?
   @Published var copyFeedback: String?
-  @Published var status = "就绪"
   @Published var errorMessage: String?
   @Published var deepSeekAPIKey = ""
   @Published var deepSeekBaseURL = "https://api.deepseek.com"
@@ -1042,7 +1039,6 @@ final class AppModel: ObservableObject {
     } catch {
       repository = nil
       errorMessage = error.localizedDescription
-      status = "数据库打开失败"
     }
 
     deepSeekBaseURL = UserDefaults.standard.string(forKey: "deepseek.baseURL")
@@ -1054,14 +1050,6 @@ final class AppModel: ObservableObject {
     deepSeekAPIKey = UserDefaults.standard.string(forKey: "deepseek.apiKey") ?? ""
     if !deepSeekAPIKey.isEmpty {
       deepSeekConnectionMessage = "已读取本地配置，尚未测试"
-    }
-  }
-
-  var comparisonTitle: String {
-    guard let comparison else { return "对比内容为空" }
-    switch comparison.kind {
-    case .manual: return "AI 生成结果"
-    case .history: return "历史版本 V\(comparison.sourceVersion ?? 0)"
     }
   }
 
@@ -1101,10 +1089,7 @@ final class AppModel: ObservableObject {
     else { return }
     workspace.sections[index].title = title
     self.workspace = workspace
-    if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      autosaveStatus = "尚未自动保存"
-      status = "栏目名称不能为空；输入有效名称后会自动保存"
-    } else {
+    if !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       persistDraft()
       syncManualComparisonStructure()
     }
@@ -1179,7 +1164,6 @@ final class AppModel: ObservableObject {
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
       showsComparison = true
-      status = "已将 V\(version.number) 调入对比区"
     } catch { report(error) }
   }
 
@@ -1191,7 +1175,6 @@ final class AppModel: ObservableObject {
         projectID: workspace.id,
         number: version.number
       )
-      status = "正在查看历史版本 V\(version.number)"
     } catch { report(error) }
   }
 
@@ -1224,13 +1207,11 @@ final class AppModel: ObservableObject {
       )
       if let restored = self.workspace {
         try saveMarkdownDraft(restored)
-        autosaveStatus = "已自动保存"
       }
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
       showsComparison = true
       hasUnversionedChanges = true
-      status = "正在基于 V\(version.number) 编辑下一版"
       return true
     } catch {
       report(error)
@@ -1244,7 +1225,6 @@ final class AppModel: ObservableObject {
       try repository.clearComparison(projectID: workspace.id)
       comparison = nil
       showsComparison = false
-      status = "对比区已清空"
     } catch { report(error) }
   }
 
@@ -1260,17 +1240,6 @@ final class AppModel: ObservableObject {
       self.comparison = comparison
       persistDraft()
       persistComparison()
-      status = "已应用目标栏目"
-    } catch { report(error) }
-  }
-
-  func rejectComparison(sectionID: String) {
-    guard var comparison else { return }
-    do {
-      try WorkspaceActions.reject(sectionID: sectionID, comparison: &comparison.sections)
-      self.comparison = comparison
-      persistComparison()
-      status = "已拒绝目标栏目"
     } catch { report(error) }
   }
 
@@ -1305,13 +1274,6 @@ final class AppModel: ObservableObject {
       selectedHistoryVersion = version
       selectedHistorySections = workspace.sections
       hasUnversionedChanges = false
-      let feedback = "已保存 V\(version.number)"
-      versionSaveFeedback = feedback
-      status = feedback
-      Task {
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        if versionSaveFeedback == feedback { versionSaveFeedback = nil }
-      }
       return true
     } catch {
       report(error)
@@ -1351,7 +1313,6 @@ final class AppModel: ObservableObject {
         comparison = nil
         showsComparison = false
       }
-      status = "已删除 V\(number)"
       return true
     } catch {
       report(error)
@@ -1362,9 +1323,7 @@ final class AppModel: ObservableObject {
   func copyFullPrompt() {
     guard let workspace else { return }
     copy(PromptMarkdown.render(workspace.sections))
-    let count = workspace.sections.filter(\.isIncluded).count
     showCopyFeedback("复制成功")
-    status = "已复制 Markdown Prompt，共 \(count) 个维度"
   }
 
   func copyComparisonPrompt() {
@@ -1381,7 +1340,6 @@ final class AppModel: ObservableObject {
     }
     copy(PromptMarkdown.render(sections))
     showCopyFeedback("复制成功")
-    status = "已复制 Markdown 候选 Prompt"
   }
 
   @discardableResult
@@ -1395,19 +1353,16 @@ final class AppModel: ObservableObject {
     guard !apiKey.isEmpty else {
       deepSeekConnectionSucceeded = false
       deepSeekConnectionMessage = "请先填写 DeepSeek API Key"
-      status = deepSeekConnectionMessage
       return false
     }
     guard let url = URL(string: baseURL), url.scheme == "https", url.host != nil else {
       deepSeekConnectionSucceeded = false
       deepSeekConnectionMessage = "接口地址必须是有效的 HTTPS 地址"
-      status = deepSeekConnectionMessage
       return false
     }
     guard Self.supportedDeepSeekModels.contains(model) else {
       deepSeekConnectionSucceeded = false
       deepSeekConnectionMessage = "请选择受支持的 DeepSeek 模型"
-      status = deepSeekConnectionMessage
       return false
     }
 
@@ -1421,7 +1376,6 @@ final class AppModel: ObservableObject {
       deepSeekConnectionSucceeded = nil
       deepSeekConnectionMessage = "配置已保存，尚未测试"
     }
-    status = "DeepSeek 配置已保存到本软件"
     return true
   }
 
@@ -1461,12 +1415,10 @@ final class AppModel: ObservableObject {
         testedDeepSeekSettings = [deepSeekAPIKey, deepSeekBaseURL, deepSeekModel]
         deepSeekConnectionSucceeded = true
         deepSeekConnectionMessage = "连接成功，所选模型可以使用"
-        status = "DeepSeek 连接测试成功"
       } catch {
         isTestingDeepSeek = false
         deepSeekConnectionSucceeded = false
         deepSeekConnectionMessage = "连接失败：\(error.localizedDescription)"
-        status = deepSeekConnectionMessage
       }
     }
   }
@@ -1479,7 +1431,6 @@ final class AppModel: ObservableObject {
       !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }) else {
       errorMessage = "请先在 System Prompt 中写入内容。"
-      status = errorMessage ?? ""
       return
     }
     guard saveDeepSeekSettings() else { return }
@@ -1506,7 +1457,6 @@ final class AppModel: ObservableObject {
     comparison = snapshot
     showsComparison = true
     isGeneratingPrompt = true
-    status = "AI 参考稿正在生成（0/\(includedSections.count)）"
 
     Task {
       do {
@@ -1575,7 +1525,6 @@ final class AppModel: ObservableObject {
           generatedCount += 1
           try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
           comparison = snapshot
-          status = "AI 参考稿正在生成（\(generatedCount)/\(includedSections.count)）"
         }
 
         for try await streamLine in bytes.lines {
@@ -1602,11 +1551,9 @@ final class AppModel: ObservableObject {
           throw DeepSeekConfigurationError.incompletePrompt
         }
         isGeneratingPrompt = false
-        status = "AI 参考稿已生成，右侧 System Prompt 正式稿可继续编排和修改"
       } catch {
         isGeneratingPrompt = false
         errorMessage = "AI 生成失败：\(error.localizedDescription)"
-        status = errorMessage ?? ""
       }
     }
   }
@@ -1625,10 +1572,7 @@ final class AppModel: ObservableObject {
       try repository.saveDraft(workspace)
       try saveMarkdownDraft(workspace)
       if markChanged { hasUnversionedChanges = true }
-      autosaveStatus = "已自动保存"
-      status = "工作稿已自动保存"
     } catch {
-      autosaveStatus = "自动保存失败"
       report(error)
     }
   }
@@ -1671,7 +1615,6 @@ final class AppModel: ObservableObject {
 
   private func showCopyFeedback(_ feedback: String) {
     copyFeedback = feedback
-    status = feedback
     Task {
       try? await Task.sleep(nanoseconds: 1_600_000_000)
       if copyFeedback == feedback { copyFeedback = nil }
@@ -1680,7 +1623,6 @@ final class AppModel: ObservableObject {
 
   private func report(_ error: Error) {
     errorMessage = error.localizedDescription
-    status = error.localizedDescription
   }
 
   private static func deepSeekErrorMessage(from data: Data) -> String? {
@@ -2134,7 +2076,6 @@ struct ContentView: View {
 
           Button {
             if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-              model.status = "请先配置 DeepSeek API Key"
               page = .settings
             } else {
               model.generatePrompt(from: model.selectedHistorySections)
@@ -2265,7 +2206,6 @@ struct ContentView: View {
 
           Button {
             if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-              model.status = "请先配置 DeepSeek API Key"
               page = .settings
             } else {
               model.generatePrompt()
