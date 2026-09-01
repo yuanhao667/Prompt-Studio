@@ -79,6 +79,7 @@ struct AppRootView: View {
               .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
           }
+          .ignoresSafeArea(.container, edges: .top)
         }
       } else {
         launchPage
@@ -185,9 +186,9 @@ struct AppRootView: View {
       .buttonStyle(.plain)
       .help(workspacePage == .settings ? "关闭设置" : "设置")
     }
-    .padding(.horizontal, 10)
-    .padding(.top, -24)
-    .padding(.bottom, -8)
+    .padding(.leading, showsSidebar ? 10 : 94)
+    .padding(.trailing, 10)
+    .frame(height: 28)
   }
 
   private var launchPage: some View {
@@ -299,14 +300,6 @@ struct AppRootView: View {
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
-
-                Button { createPromptDocument(in: folder.url) } label: {
-                  Image(systemName: "plus")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("在当前项目中新建 Prompt 文件")
 
                 Menu {
                   Button("重命名", systemImage: "pencil") { beginRenaming(folder.url) }
