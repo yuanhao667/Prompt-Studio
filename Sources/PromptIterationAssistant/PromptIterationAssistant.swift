@@ -202,6 +202,11 @@ struct AppRootView: View {
     ToolbarItem(placement: .navigation) {
       if folderURL != nil {
         HStack(spacing: 10) {
+          if showsSidebar {
+            Spacer()
+              .frame(width: max(0, sidebarWidth - 90))
+          }
+
           Button { showsSidebar.toggle() } label: {
             Image(systemName: "sidebar.leading")
               .font(.system(size: 18, weight: .semibold))
@@ -214,9 +219,6 @@ struct AppRootView: View {
           .help(showsSidebar ? "收起文件列表" : "展开文件列表")
 
           if workspacePage == .settings {
-            Spacer()
-              .frame(width: showsSidebar ? max(0, sidebarWidth - 140) : 0)
-
             Button { workspacePage = pageBeforeSettings } label: {
               Image(systemName: "chevron.left")
                 .font(.system(size: 18, weight: .semibold))
