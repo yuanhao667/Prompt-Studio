@@ -96,30 +96,42 @@ struct AppRootView: View {
       Text(launcherError ?? "")
     }
     .alert(
-      "重命名文档",
+      pendingRenameURL?.hasDirectoryPath == true ? "重命名文件夹" : "重命名文档",
       isPresented: Binding(
         get: { pendingRenameURL != nil },
         set: { if !$0 { pendingRenameURL = nil } }
       )
     ) {
-      TextField("文档名称", text: $renameText)
+      TextField(pendingRenameURL?.hasDirectoryPath == true ? "文件夹名称" : "文档名称", text: $renameText)
       Button("重命名") {
-        if let pendingRenameURL { renameDocument(pendingRenameURL, to: renameText) }
+        if let pendingRenameURL {
+          if pendingRenameURL.hasDirectoryPath {
+            renameFolder(pendingRenameURL, to: renameText)
+          } else {
+            renameDocument(pendingRenameURL, to: renameText)
+          }
+        }
         pendingRenameURL = nil
       }
       Button("取消", role: .cancel) { pendingRenameURL = nil }
     } message: {
-      Text("文件会继续保存为 Markdown 格式。")
+      Text(
+        pendingRenameURL?.hasDirectoryPath == true
+          ? "文件夹内的 Prompt 和历史版本会一起移动。"
+          : "文件会继续保存为 Markdown 格式。"
+      )
     }
     .confirmationDialog(
-      "将“\(pendingDocumentDeletion?.deletingPathExtension().lastPathComponent ?? "")”移到废纸篓？",
+      pendingDocumentDeletion?.hasDirectoryPath == true
+        ? "将项目“\(pendingDocumentDeletion?.lastPathComponent ?? "")”移到废纸篓？"
+        : "将“\(pendingDocumentDeletion?.deletingPathExtension().lastPathComponent ?? "")”移到废纸篓？",
       isPresented: Binding(
         get: { pendingDocumentDeletion != nil },
         set: { if !$0 { pendingDocumentDeletion = nil } }
       )
     ) {
       Button("移到废纸篓", role: .destructive) {
-        if let pendingDocumentDeletion { trashDocument(pendingDocumentDeletion) }
+        if let pendingDocumentDeletion { trashItem(pendingDocumentDeletion) }
         pendingDocumentDeletion = nil
       }
       Button("取消", role: .cancel) { pendingDocumentDeletion = nil }
@@ -327,6 +339,27 @@ struct AppRootView: View {
                 }
                 .buttonStyle(.plain)
                 .help("在当前项目中新建 Prompt 文件")
+
+                Menu {
+                  Button("重命名", systemImage: "pencil") { beginRenaming(folder.url) }
+                  Button("添加子文件", systemImage: "doc.badge.plus") {
+                    createPromptDocument(in: folder.url)
+                  }
+                  Button("在访达中显示", systemImage: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder.url])
+                  }
+                  Divider()
+                  Button("删除项目", systemImage: "trash", role: .destructive) {
+                    pendingDocumentDeletion = folder.url
+                  }
+                } label: {
+                  Image(systemName: "ellipsis")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
               }
 
               if expandedFolderIDs.contains(folder.id) {
@@ -550,13 +583,16 @@ struct AppRootView: View {
 
   private func renamePromptFolder(to enteredName: String) {
     guard let documentURL = model?.documentURL else { return }
+    renameFolder(documentURL.deletingLastPathComponent(), to: enteredName)
+  }
+
+  private func renameFolder(_ source: URL, to enteredName: String) {
     let name = enteredName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else {
       launcherError = "请输入有效的 Prompt 名称"
       return
     }
 
-    let source = documentURL.deletingLastPathComponent()
     guard source.lastPathComponent != name else { return }
     let destination = source.deletingLastPathComponent().appendingPathComponent(name)
     guard !FileManager.default.fileExists(atPath: destination.path) else {
@@ -564,16 +600,25 @@ struct AppRootView: View {
       return
     }
 
+    let selectedDocument = model?.documentURL
+    let isSelectedFolder = selectedDocument?.deletingLastPathComponent().standardizedFileURL
+      == source.standardizedFileURL
+    if isSelectedFolder { model = nil }
     do {
-      model = nil
       try FileManager.default.moveItem(at: source, to: destination)
       expandedFolderIDs.remove(source.standardizedFileURL.path)
       expandedFolderIDs.insert(destination.standardizedFileURL.path)
       if let folderURL { refreshFiles(in: folderURL) }
-      openDocument(destination.appendingPathComponent(documentURL.lastPathComponent))
+      if isSelectedFolder, let selectedDocument {
+        openDocument(destination.appendingPathComponent(selectedDocument.lastPathComponent))
+      }
     } catch {
       launcherError = error.localizedDescription
-      if FileManager.default.fileExists(atPath: documentURL.path) { openDocument(documentURL) }
+      if isSelectedFolder, let selectedDocument,
+        FileManager.default.fileExists(atPath: selectedDocument.path)
+      {
+        openDocument(selectedDocument)
+      }
     }
   }
 
@@ -680,7 +725,7 @@ struct AppRootView: View {
   }
 
   private func beginRenaming(_ url: URL) {
-    renameText = url.deletingPathExtension().lastPathComponent
+    renameText = url.hasDirectoryPath ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
     pendingRenameURL = url
   }
 
@@ -723,8 +768,11 @@ struct AppRootView: View {
     }
   }
 
-  private func trashDocument(_ url: URL) {
-    let wasSelected = model?.documentURL?.standardizedFileURL == url.standardizedFileURL
+  private func trashItem(_ url: URL) {
+    let selectedDocument = model?.documentURL
+    let selectedPath = selectedDocument?.standardizedFileURL.path
+    let targetPath = url.standardizedFileURL.path
+    let wasSelected = selectedPath == targetPath || selectedPath?.hasPrefix(targetPath + "/") == true
     if wasSelected { model = nil }
     do {
       try FileManager.default.trashItem(at: url, resultingItemURL: nil)
@@ -734,7 +782,7 @@ struct AppRootView: View {
       }
     } catch {
       launcherError = error.localizedDescription
-      if wasSelected { openDocument(url) }
+      if wasSelected, let selectedDocument { openDocument(selectedDocument) }
     }
   }
 
