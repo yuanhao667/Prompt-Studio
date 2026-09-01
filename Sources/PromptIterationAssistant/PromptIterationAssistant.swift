@@ -48,6 +48,7 @@ struct AppRootView: View {
   @State private var pendingRenameURL: URL?
   @State private var renameText = ""
   @State private var pendingDocumentDeletion: URL?
+  @State private var pendingVersionEdit: VersionSummary?
 
   var body: some View {
     Group {
@@ -123,6 +124,26 @@ struct AppRootView: View {
       }
       Button("取消", role: .cancel) { pendingDocumentDeletion = nil }
     }
+    .confirmationDialog(
+      "从 V\(pendingVersionEdit?.number ?? 0) 开始编辑？",
+      isPresented: Binding(
+        get: { pendingVersionEdit != nil },
+        set: { if !$0 { pendingVersionEdit = nil } }
+      ),
+      titleVisibility: .visible
+    ) {
+      Button("创建待迭代版本") {
+        if let version = pendingVersionEdit,
+          model?.startEditingHistory(version) == true
+        {
+          workspacePage = .editor
+        }
+        pendingVersionEdit = nil
+      }
+      Button("取消", role: .cancel) { pendingVersionEdit = nil }
+    } message: {
+      Text("当前工作稿会替换为这个历史版本，已保存的版本不受影响。")
+    }
   }
 
   private var workspaceNavigation: some View {
@@ -140,15 +161,17 @@ struct AppRootView: View {
 
       Spacer()
       HStack(spacing: 4) {
-        ForEach(WorkspacePage.allCases) { item in
+        ForEach([WorkspacePage.editor, WorkspacePage.settings]) { item in
+          let isSelected = workspacePage == item
+            || (item == .editor && workspacePage == .history)
           Button { workspacePage = item } label: {
             Label(item.rawValue, systemImage: item.systemImage)
               .frame(minWidth: 88)
               .padding(.horizontal, 8)
               .padding(.vertical, 7)
-              .foregroundStyle(workspacePage == item ? Color.white : Color.primary)
+              .foregroundStyle(isSelected ? Color.white : Color.primary)
               .background(
-                workspacePage == item ? Color.accentColor : Color.clear,
+                isSelected ? Color.accentColor : Color.clear,
                 in: Capsule()
               )
               .contentShape(Rectangle())
@@ -302,25 +325,48 @@ struct AppRootView: View {
         .lineLimit(1)
         .padding(.vertical, 6)
     } else if case let .version(number) = item.kind {
-      Button {
-        openHistoryVersion(number, in: item.url.deletingLastPathComponent())
-      } label: {
-        HStack(spacing: 8) {
-          Text("V\(number)")
-            .font(.caption.bold().monospacedDigit())
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .foregroundStyle(.blue)
-            .background(Color.blue.opacity(0.14), in: Capsule())
-          Text("历史版本")
-            .foregroundStyle(.secondary)
-          Spacer()
+      HStack(spacing: 4) {
+        Button {
+          openHistoryVersion(number, in: item.url.deletingLastPathComponent())
+        } label: {
+          HStack(spacing: 8) {
+            Text("V\(number)")
+              .font(.caption.bold().monospacedDigit())
+              .padding(.horizontal, 7)
+              .padding(.vertical, 3)
+              .foregroundStyle(.blue)
+              .background(Color.blue.opacity(0.14), in: Capsule())
+            Text("历史版本")
+              .foregroundStyle(.secondary)
+            Spacer()
+          }
+          .padding(.leading, 8)
+          .padding(.vertical, 6)
+          .contentShape(Rectangle())
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+
+        Menu {
+          Button("基于此版本编辑", systemImage: "square.and.pencil") {
+            editHistoryVersion(number, in: item.url.deletingLastPathComponent())
+          }
+          Button("复制版本", systemImage: "doc.on.doc") {
+            copyHistoryVersion(number, in: item.url.deletingLastPathComponent())
+          }
+          Divider()
+          Button("在 Finder 中显示", systemImage: "folder") {
+            NSWorkspace.shared.activateFileViewerSelecting([item.url])
+          }
+        } label: {
+          Image(systemName: "ellipsis")
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
       }
-      .buttonStyle(.plain)
+      .padding(.horizontal, 2)
       .background(
         workspacePage == .history
           && model?.documentURL?.deletingLastPathComponent().standardizedFileURL
@@ -331,7 +377,10 @@ struct AppRootView: View {
       )
     } else {
       HStack(spacing: 4) {
-        Button { openDocument(item.url) } label: {
+        Button {
+          openDocument(item.url)
+          workspacePage = .editor
+        } label: {
           HStack(spacing: 8) {
             Text("最新版本")
               .font(.caption.bold())
@@ -505,6 +554,21 @@ struct AppRootView: View {
       workspacePage = .history
     } catch {
       launcherError = error.localizedDescription
+    }
+  }
+
+  private func copyHistoryVersion(_ number: Int, in promptFolder: URL) {
+    openHistoryVersion(number, in: promptFolder)
+    model?.copySelectedHistory()
+  }
+
+  private func editHistoryVersion(_ number: Int, in promptFolder: URL) {
+    openHistoryVersion(number, in: promptFolder)
+    guard let version = model?.selectedHistoryVersion else { return }
+    if model?.hasUnversionedChanges == true {
+      pendingVersionEdit = version
+    } else if model?.startEditingHistory(version) == true {
+      workspacePage = .editor
     }
   }
 
@@ -1653,8 +1717,6 @@ struct ContentView: View {
   @Binding var page: WorkspacePage
   let onVersionsChanged: () -> Void
   @State private var pendingDeletion: PromptSection?
-  @State private var pendingHistoryEdit: VersionSummary?
-  @State private var versionSearch = ""
   @State private var hoveredSectionID: String?
   @State private var sectionDropTargetID: String?
 
@@ -1663,7 +1725,7 @@ struct ContentView: View {
       if page == .editor {
         editorPage
       } else if page == .history {
-        historyPage
+        historyDetail
       } else {
         settingsPage
       }
@@ -1697,22 +1759,6 @@ struct ContentView: View {
     } message: {
       Text("该栏目会从当前工作稿和手动候选中删除；已保存的正式版本不受影响。")
     }
-    .confirmationDialog(
-      "从 V\(pendingHistoryEdit?.number ?? 0) 开始编辑？",
-      isPresented: Binding(
-        get: { pendingHistoryEdit != nil },
-        set: { if !$0 { pendingHistoryEdit = nil } }
-      ),
-      titleVisibility: .visible
-    ) {
-      Button("创建待迭代版本") {
-        if let version = pendingHistoryEdit { openHistoryEditor(version) }
-        pendingHistoryEdit = nil
-      }
-      Button("取消", role: .cancel) { pendingHistoryEdit = nil }
-    } message: {
-      Text("当前工作稿会替换为这个历史版本，已保存的正式版本不会改变。")
-    }
   }
 
   private var settingsPage: some View {
@@ -1745,85 +1791,6 @@ struct ContentView: View {
     }
   }
 
-  private var filteredVersions: [VersionSummary] {
-    let query = versionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !query.isEmpty else { return model.versions }
-    return model.versions.filter {
-      "V\($0.number) \($0.note) \($0.createdAt)".localizedCaseInsensitiveContains(query)
-    }
-  }
-
-  @ViewBuilder
-  private var historyPage: some View {
-    if model.versions.isEmpty {
-      VStack(spacing: 12) {
-        Image(systemName: "clock.arrow.circlepath")
-          .font(.system(size: 42))
-          .foregroundStyle(.secondary)
-        Text("还没有历史版本").font(.title3.bold())
-        Text("回到编辑页，点击“保存为新版本”后会出现在这里。")
-          .foregroundStyle(.secondary)
-        Button("返回编辑") { page = .editor }
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-    } else {
-      HSplitView {
-        VStack(alignment: .leading, spacing: 0) {
-          VStack(alignment: .leading, spacing: 10) {
-            TextField("搜索版本或备注", text: $versionSearch)
-              .textFieldStyle(.roundedBorder)
-            ScrollView {
-              LazyVStack(spacing: 6) {
-                ForEach(filteredVersions) { version in
-                  versionRow(version)
-                }
-              }
-            }
-            if filteredVersions.isEmpty {
-              Text("没有匹配的版本")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-          }
-          .padding(14)
-        }
-        .frame(minWidth: 250, idealWidth: 290, maxWidth: 330)
-
-        historyDetail
-          .frame(minWidth: 620, maxWidth: .infinity, maxHeight: .infinity)
-      }
-    }
-  }
-
-  private func versionRow(_ version: VersionSummary) -> some View {
-    let selected = model.selectedHistoryVersion?.id == version.id
-    return Button {
-      model.selectHistory(version)
-    } label: {
-      VStack(alignment: .leading, spacing: 5) {
-        HStack {
-          Text("V\(version.number)").font(.headline.monospacedDigit())
-          Spacer()
-          if model.workspace?.currentVersion == version.number {
-            Text("当前正式版本")
-              .font(.caption)
-              .foregroundStyle(.blue)
-          }
-        }
-        Text(version.note.isEmpty ? "无备注" : version.note)
-          .lineLimit(1)
-        Text(compactDate(version.createdAt))
-          .font(.caption.monospacedDigit())
-          .foregroundStyle(.secondary)
-      }
-      .padding(10)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(selected ? Color.blue.opacity(0.12) : Color.clear)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-  }
-
   @ViewBuilder
   private var historyDetail: some View {
     if let version = model.selectedHistoryVersion {
@@ -1838,28 +1805,6 @@ struct ContentView: View {
             .font(.caption.monospacedDigit())
             .foregroundStyle(.tertiary)
           Spacer()
-          Button {
-            if model.hasUnversionedChanges {
-              pendingHistoryEdit = version
-            } else {
-              openHistoryEditor(version)
-            }
-          } label: {
-            Image(systemName: "square.and.pencil")
-              .frame(width: 28, height: 28)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .help("基于这个版本编辑")
-          Button {
-            model.copySelectedHistory()
-          } label: {
-            Image(systemName: "doc.on.doc")
-              .frame(width: 28, height: 28)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .help("复制这个版本")
         }
         .frame(height: 42)
         .padding(.horizontal, 10)
@@ -1892,10 +1837,6 @@ struct ContentView: View {
 
   private func compactDate(_ value: String) -> String {
     String(value.replacingOccurrences(of: "T", with: " ").prefix(16))
-  }
-
-  private func openHistoryEditor(_ version: VersionSummary) {
-    if model.startEditingHistory(version) { page = .editor }
   }
 
   private func currentPane(_ workspace: PromptWorkspace) -> some View {
