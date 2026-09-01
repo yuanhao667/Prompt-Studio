@@ -8,6 +8,14 @@ final class PromptIterationCoreTests: XCTestCase {
     var workspace = try context.repository.loadOrCreateWorkspace()
 
     XCTAssertEqual(workspace.sections.count, 12)
+    XCTAssertEqual(
+      workspace.sections.map(\.title),
+      [
+        "角色与定位", "任务目标", "背景与上下文", "输入与变量",
+        "意图识别与澄清", "工作流程", "工具使用", "输出要求",
+        "质量标准", "约束与禁止事项", "异常与兜底", "示例",
+      ]
+    )
     workspace.sections[0].content = "你是一名编辑"
     try context.repository.saveDraft(workspace)
 

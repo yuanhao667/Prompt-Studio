@@ -14,10 +14,6 @@ struct PromptIterationAssistantApp: App {
     }
     .windowStyle(.titleBar)
     .commands {
-      CommandGroup(replacing: .newItem) {
-        Button("新建手动候选") { model.createManualComparison() }
-          .keyboardShortcut("n")
-      }
       CommandMenu("Prompt") {
         Button("保存为新版本") { model.saveVersion() }
           .keyboardShortcut("s", modifiers: [.command, .shift])
@@ -35,7 +31,8 @@ final class AppModel: ObservableObject {
   @Published var versions: [VersionSummary] = []
   @Published var selectedHistoryVersion: VersionSummary?
   @Published var selectedHistorySections: [PromptSection] = []
-  @Published var currentOnLeading = true
+  @Published var currentOnLeading = false
+  @Published var showsComparison = false
   @Published var hasUnversionedChanges = false
   @Published var status = "就绪"
   @Published var errorMessage: String?
@@ -45,6 +42,7 @@ final class AppModel: ObservableObject {
   @Published var isTestingDeepSeek = false
   @Published var deepSeekConnectionSucceeded: Bool?
   @Published var deepSeekConnectionMessage = "尚未配置"
+  @Published var isGeneratingPrompt = false
 
   let databaseURL: URL
   private var repository: WorkspaceRepository?
@@ -103,7 +101,7 @@ final class AppModel: ObservableObject {
   var comparisonTitle: String {
     guard let comparison else { return "对比内容为空" }
     switch comparison.kind {
-    case .manual: return "手动候选"
+    case .manual: return "AI 生成结果"
     case .history: return "历史版本 V\(comparison.sourceVersion ?? 0)"
     }
   }
@@ -182,27 +180,6 @@ final class AppModel: ObservableObject {
     }
   }
 
-  func createManualComparison() {
-    guard let workspace, let repository else { return }
-    let snapshot = ComparisonSnapshot(
-      kind: .manual,
-      sourceVersion: nil,
-      sections: workspace.sections.map {
-        ComparisonSection(
-          sectionID: $0.id,
-          title: $0.title,
-          content: "",
-          position: $0.position
-        )
-      }
-    )
-    do {
-      try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
-      comparison = snapshot
-      status = "已创建空白手动候选"
-    } catch { report(error) }
-  }
-
   func loadHistory(_ version: VersionSummary) {
     guard let workspace, let repository else { return }
     do {
@@ -222,6 +199,7 @@ final class AppModel: ObservableObject {
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
       currentOnLeading = false
+      showsComparison = true
       status = "已将 V\(version.number) 调入对比区"
     } catch { report(error) }
   }
@@ -268,6 +246,7 @@ final class AppModel: ObservableObject {
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
       currentOnLeading = false
+      showsComparison = true
       hasUnversionedChanges = true
       status = "正在基于 V\(version.number) 编辑下一版"
       return true
@@ -282,18 +261,9 @@ final class AppModel: ObservableObject {
     do {
       try repository.clearComparison(projectID: workspace.id)
       comparison = nil
+      showsComparison = false
       status = "对比区已清空"
     } catch { report(error) }
-  }
-
-  func updateComparisonContent(sectionID: String, content: String) {
-    guard var comparison, comparison.kind == .manual,
-      let index = comparison.sections.firstIndex(where: { $0.sectionID == sectionID })
-    else { return }
-    comparison.sections[index].content = content
-    comparison.sections[index].status = .userModified
-    self.comparison = comparison
-    persistComparison()
   }
 
   func applyComparison(sectionID: String) {
@@ -446,6 +416,106 @@ final class AppModel: ObservableObject {
     }
   }
 
+  func generatePrompt() {
+    guard let workspace, let repository else { return }
+    let includedSections = workspace.sections.filter(\.isIncluded)
+    guard includedSections.contains(where: {
+      !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }) else {
+      errorMessage = "请先在用户 Prompt 中写入内容。"
+      status = errorMessage ?? ""
+      return
+    }
+    guard saveDeepSeekSettings() else { return }
+    guard let endpoint = URL(string: "\(deepSeekBaseURL)/chat/completions") else { return }
+
+    isGeneratingPrompt = true
+    status = "DeepSeek 正在优化 Prompt…"
+
+    Task {
+      do {
+        let input = try JSONEncoder().encode(
+          includedSections.map {
+            DeepSeekPromptSection(id: $0.id, title: $0.title, content: $0.content)
+          }
+        )
+        guard let inputJSON = String(data: input, encoding: .utf8) else {
+          throw DeepSeekConfigurationError.invalidResponse
+        }
+        let body: [String: Any] = [
+          "model": deepSeekModel,
+          "messages": [
+            [
+              "role": "system",
+              "content": """
+                你是 Prompt 优化助手。优化每个栏目中的内容，但不得增加、删除、改名或调整栏目顺序。
+                只返回合法 JSON，格式必须是 {"sections":[{"id":"原 id","content":"优化后的内容"}]}。
+                每个输入 id 必须原样返回一次，不要输出 Markdown 代码围栏或其他说明。
+                """,
+            ],
+            ["role": "user", "content": inputJSON],
+          ],
+          "response_format": ["type": "json_object"],
+          "stream": false,
+        ]
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("Bearer \(deepSeekAPIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+          throw DeepSeekConfigurationError.invalidResponse
+        }
+        guard (200...299).contains(response.statusCode) else {
+          throw DeepSeekConfigurationError.requestFailed(
+            statusCode: response.statusCode,
+            message: Self.deepSeekErrorMessage(from: data)
+          )
+        }
+
+        let chat = try JSONDecoder().decode(DeepSeekChatResponse.self, from: data)
+        guard let content = chat.choices.first?.message.content,
+          let generatedData = content.data(using: .utf8)
+        else { throw DeepSeekConfigurationError.invalidResponse }
+        let generated = try JSONDecoder().decode(DeepSeekGeneratedPrompt.self, from: generatedData)
+        let generatedByID = Dictionary(
+          generated.sections.map { ($0.id, $0.content) },
+          uniquingKeysWith: { _, latest in latest }
+        )
+        guard includedSections.allSatisfy({ generatedByID[$0.id] != nil }) else {
+          throw DeepSeekConfigurationError.incompletePrompt
+        }
+
+        let snapshot = ComparisonSnapshot(
+          kind: .manual,
+          sourceVersion: nil,
+          sections: workspace.sections.map { section in
+            ComparisonSection(
+              sectionID: section.id,
+              title: section.title,
+              content: generatedByID[section.id] ?? "",
+              position: section.position
+            )
+          }
+        )
+        try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
+        comparison = snapshot
+        currentOnLeading = false
+        showsComparison = true
+        isGeneratingPrompt = false
+        status = "AI 参考稿已生成，右侧用户正式稿可继续编排和修改"
+      } catch {
+        isGeneratingPrompt = false
+        errorMessage = "AI 生成失败：\(error.localizedDescription)"
+        status = errorMessage ?? ""
+      }
+    }
+  }
+
   private func mutateWorkspace(_ change: (inout PromptWorkspace) -> Void) {
     guard var workspace else { return }
     change(&workspace)
@@ -541,12 +611,15 @@ final class AppModel: ObservableObject {
 
 private enum DeepSeekConfigurationError: LocalizedError {
   case invalidResponse
+  case incompletePrompt
   case requestFailed(statusCode: Int, message: String?)
 
   var errorDescription: String? {
     switch self {
     case .invalidResponse:
       return "服务器返回了无法识别的响应"
+    case .incompletePrompt:
+      return "AI 返回的栏目不完整，请重新生成"
     case let .requestFailed(statusCode, message):
       if let message, !message.isEmpty {
         return "HTTP \(statusCode)：\(message)"
@@ -554,6 +627,30 @@ private enum DeepSeekConfigurationError: LocalizedError {
       return "HTTP \(statusCode)"
     }
   }
+}
+
+private struct DeepSeekPromptSection: Encodable {
+  let id: String
+  let title: String
+  let content: String
+}
+
+private struct DeepSeekChatResponse: Decodable {
+  struct Choice: Decodable {
+    struct Message: Decodable { let content: String }
+    let message: Message
+  }
+
+  let choices: [Choice]
+}
+
+private struct DeepSeekGeneratedPrompt: Decodable {
+  struct Section: Decodable {
+    let id: String
+    let content: String
+  }
+
+  let sections: [Section]
 }
 
 private enum DeepSeekKeychain {
@@ -801,19 +898,24 @@ struct ContentView: View {
     editorHeader
     Divider()
     if let workspace = model.workspace {
-      HStack(alignment: .top, spacing: 12) {
-        if model.comparison?.kind == .history {
-          comparisonPane
-          currentPane(workspace)
-        } else if model.currentOnLeading {
-          currentPane(workspace)
-          comparisonPane
-        } else {
-          comparisonPane
-          currentPane(workspace)
+      if !model.showsComparison {
+        currentPane(workspace)
+          .padding(14)
+      } else {
+        HStack(alignment: .top, spacing: 12) {
+          if model.comparison?.kind == .history {
+            comparisonPane
+            currentPane(workspace)
+          } else if model.currentOnLeading {
+            currentPane(workspace)
+            comparisonPane
+          } else {
+            comparisonPane
+            currentPane(workspace)
+          }
         }
+        .padding(14)
       }
-      .padding(14)
     } else {
       emptyState
     }
@@ -844,26 +946,41 @@ struct ContentView: View {
             in: Capsule()
           )
         Spacer()
+        Button {
+          if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            model.status = "请先配置 DeepSeek API Key"
+            page = .settings
+          } else {
+            model.generatePrompt()
+          }
+        } label: {
+          HStack(spacing: 7) {
+            if model.isGeneratingPrompt {
+              ProgressView().controlSize(.small)
+            } else {
+              Image(systemName: "sparkles")
+            }
+            Text(model.isGeneratingPrompt ? "生成中…" : "AI 生成")
+          }
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(model.isGeneratingPrompt)
         Button("保存为新版本") { model.saveVersion() }
-          .buttonStyle(.borderedProminent)
       }
 
       HStack {
         Button("新增维度") { model.addSection() }
-        Menu("选择对比来源") {
-          Button("新建空白手动候选") { model.createManualComparison() }
-          if !model.versions.isEmpty {
-            Divider()
-            ForEach(model.versions) { version in
-              Button("历史版本 V\(version.number)") { model.loadHistory(version) }
-            }
+        if model.showsComparison {
+          Button {
+            model.clearComparison()
+          } label: {
+            Image(systemName: "rectangle.compress.vertical")
           }
-          Divider()
-          Button("清空对比区") { model.clearComparison() }
+          .help("收起对照，返回单栏编辑")
+          Text("当前：\(model.comparisonTitle)")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
-        Text("当前：\(model.comparisonTitle)")
-          .font(.caption)
-          .foregroundStyle(.secondary)
         Spacer()
       }
     }
@@ -1042,7 +1159,10 @@ struct ContentView: View {
 
   private func currentPane(_ workspace: PromptWorkspace) -> some View {
     VStack(alignment: .leading, spacing: 10) {
-      if model.comparison?.kind != .history {
+      if model.showsComparison,
+        let comparison = model.comparison,
+        comparison.kind != .history
+      {
         HStack {
           Spacer()
           Image(systemName: "line.3.horizontal")
@@ -1055,7 +1175,9 @@ struct ContentView: View {
       }
       HStack {
         Label(
-          model.comparison?.kind == .history ? "待迭代版本" : "用户 Prompt",
+          model.showsComparison && model.comparison?.kind == .history
+            ? "待迭代版本"
+            : model.showsComparison ? "用户正式稿" : "用户 Prompt",
           systemImage: "pencil.line"
         )
           .font(.headline)
@@ -1131,8 +1253,7 @@ struct ContentView: View {
       }
       HStack {
         Label(
-          model.comparison?.kind == .history
-            ? model.comparisonTitle : "AI 生成 Prompt（\(model.comparisonTitle)）",
+          model.comparison?.kind == .history ? model.comparisonTitle : "AI 参考稿",
           systemImage: model.comparison?.kind == .history
             ? "clock.arrow.circlepath" : "rectangle.split.2x1"
         )
@@ -1152,7 +1273,7 @@ struct ContentView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("复制完整候选")
+            .help("复制完整 AI 参考稿")
           }
           .frame(height: 40)
           .padding(.horizontal, 8)
@@ -1164,7 +1285,7 @@ struct ContentView: View {
           ScrollView {
             LazyVStack(spacing: 0) {
               ForEach(comparison.sections) { section in
-                comparisonSectionEditor(section, kind: comparison.kind)
+                comparisonSectionEditor(section)
                 if section.id != comparison.sections.last?.id {
                   Divider().padding(.vertical, 6)
                 }
@@ -1277,10 +1398,7 @@ struct ContentView: View {
     }
   }
 
-  private func comparisonSectionEditor(
-    _ section: ComparisonSection,
-    kind: ComparisonKind
-  ) -> some View {
+  private func comparisonSectionEditor(_ section: ComparisonSection) -> some View {
     let isIncluded = model.workspace?.sections.first(where: { $0.id == section.sectionID })?
       .isIncluded ?? true
     return VStack(alignment: .leading, spacing: 8) {
@@ -1292,28 +1410,12 @@ struct ContentView: View {
         Text(section.title).font(.headline)
         Spacer()
       }
-      if kind == .manual {
-        TextEditor(
-          text: Binding(
-            get: {
-              model.comparison?.sections.first(where: { $0.sectionID == section.sectionID })?
-                .content ?? ""
-            },
-            set: { model.updateComparisonContent(sectionID: section.sectionID, content: $0) }
-          )
-        )
+      Text(section.content.isEmpty ? "该栏目无内容" : section.content)
         .font(.system(.body, design: .monospaced))
-        .scrollContentBackground(.hidden)
-        .frame(minHeight: 100)
+        .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
         .padding(.leading, 42)
-      } else {
-        Text(section.content.isEmpty ? "该版本无内容" : section.content)
-          .font(.system(.body, design: .monospaced))
-          .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
-          .padding(.leading, 42)
-      }
     }
     .padding(.vertical, 10)
     .opacity(isIncluded ? 1 : 0.48)
