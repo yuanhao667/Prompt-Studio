@@ -266,7 +266,7 @@ struct AppRootView: View {
   private var launchPage: some View {
     VStack(alignment: .leading, spacing: 52) {
       VStack(alignment: .leading, spacing: 8) {
-        Text("Prompt 迭代助手")
+        Text("Prompt Studio")
           .font(.system(size: 42, weight: .bold))
         Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
           .font(.title3)

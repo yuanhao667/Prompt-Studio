@@ -16,7 +16,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "500000000000000000000002"
-               BuildableName = "PromptIterationAssistant.app"
+               BuildableName = "Prompt Studio.app"
                BlueprintName = "PromptIterationAssistant"
                ReferencedContainer = "container:PromptIterationAssistant.xcodeproj">
             </BuildableReference>
@@ -54,7 +54,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "500000000000000000000002"
-            BuildableName = "PromptIterationAssistant.app"
+            BuildableName = "Prompt Studio.app"
             BlueprintName = "PromptIterationAssistant"
             ReferencedContainer = "container:PromptIterationAssistant.xcodeproj">
          </BuildableReference>
@@ -70,7 +70,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "500000000000000000000002"
-            BuildableName = "PromptIterationAssistant.app"
+            BuildableName = "Prompt Studio.app"
             BlueprintName = "PromptIterationAssistant"
             ReferencedContainer = "container:PromptIterationAssistant.xcodeproj">
          </BuildableReference>
