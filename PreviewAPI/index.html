@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Prompt 迭代助手 | 验收预览</title>
+    <style>
+      :root {
+        --bg: #f4f6f8;
+        --surface: #fcfcfd;
+        --surface-strong: #ffffff;
+        --text: #172033;
+        --muted: #647086;
+        --line: #dfe4eb;
+        --accent: #1f66d1;
+        --accent-strong: #174d9d;
+        --accent-soft: #e7f0ff;
+        --success: #19724b;
+        --success-soft: #e4f5ec;
+        --shadow: 0 24px 70px rgb(30 48 78 / 0.12);
+        --radius: 16px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #10141b;
+          --surface: #171c25;
+          --surface-strong: #1d2430;
+          --text: #f1f5fb;
+          --muted: #a5afbf;
+          --line: #303948;
+          --accent: #73a8ff;
+          --accent-strong: #a6c7ff;
+          --accent-soft: #1d3458;
+          --success: #71d5a9;
+          --success-soft: #173a2c;
+          --shadow: 0 24px 70px rgb(0 0 0 / 0.34);
+        }
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+        line-height: 1.6;
+      }
+      button, textarea, input, a { font: inherit; }
+      a { color: inherit; }
+      button, a { -webkit-tap-highlight-color: transparent; }
+      :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 3px; }
+
+      .shell { width: min(1280px, calc(100% - 40px)); margin: 0 auto; }
+      nav {
+        height: 68px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand { display: flex; align-items: center; gap: 12px; font-weight: 720; letter-spacing: -0.02em; }
+      .brand-mark {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border-radius: 10px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 14px;
+      }
+      .live-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 11px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        color: var(--muted);
+        font-size: 13px;
+        background: var(--surface);
+      }
+      .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+
+      .hero {
+        min-height: calc(100dvh - 68px);
+        display: grid;
+        grid-template-columns: minmax(300px, 0.62fr) minmax(680px, 1.38fr);
+        gap: 44px;
+        align-items: center;
+        padding: 64px 0;
+      }
+      .eyebrow { margin: 0 0 18px; color: var(--accent); font-size: 13px; font-weight: 700; letter-spacing: 0.08em; }
+      h1 { margin: 0; max-width: 580px; font-size: clamp(42px, 4vw, 58px); line-height: 1.03; letter-spacing: -0.045em; }
+      .lede { max-width: 520px; margin: 24px 0 30px; color: var(--muted); font-size: 18px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+      .button {
+        display: inline-flex;
+        min-height: 46px;
+        align-items: center;
+        justify-content: center;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        color: var(--text);
+        text-decoration: none;
+        font-weight: 650;
+        cursor: pointer;
+        transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      }
+      .button:hover { border-color: var(--accent); }
+      .button:active { transform: translateY(1px); }
+      .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+
+      .workspace {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface-strong);
+        box-shadow: var(--shadow);
+      }
+      .window-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+      .window-title { font-size: 13px; font-weight: 700; }
+      .window-meta { color: var(--muted); font-size: 12px; }
+      .document-head-actions, .dimension-tools { display: flex; align-items: center; gap: 7px; }
+      .document-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; background: var(--surface); }
+      .prompt-document {
+        min-width: 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface-strong);
+      }
+      .prompt-document.current { border-color: var(--accent); }
+      .prompt-document.dragging { opacity: 0.58; }
+      .prompt-document.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
+      .document-grip-row {
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .drag-handle {
+        display: inline-grid;
+        width: 24px;
+        height: 22px;
+        place-items: center;
+        border-radius: 6px;
+        color: var(--muted);
+        cursor: grab;
+        user-select: none;
+      }
+      .drag-handle:hover, .drag-handle:focus-visible { background: var(--accent-soft); color: var(--accent-strong); }
+      .drag-handle:active { cursor: grabbing; }
+      .document-head {
+        min-height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-strong);
+      }
+      .document-title { display: block; font-size: 13px; font-weight: 750; }
+      .document-caption { display: block; color: var(--muted); font-size: 11px; }
+      .document-body { max-height: 560px; overflow-y: auto; padding: 4px 14px 18px; }
+      .dimension { padding: 14px 0 10px; transition: opacity 140ms ease, box-shadow 140ms ease; }
+      .dimension + .dimension { margin-top: 2px; }
+      .dimension.dragging { opacity: 0.42; }
+      .dimension.drop-target { box-shadow: inset 0 2px var(--accent); }
+      .dimension.is-hidden { opacity: 0.5; }
+      .dimension-header, .section-title {
+        display: grid;
+        grid-template-columns: 22px 12px minmax(0, 1fr) auto;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 6px;
+        font-size: 12px;
+        font-weight: 720;
+      }
+      .markdown-mark { color: var(--accent-strong); font-family: "SFMono-Regular", Consolas, monospace; }
+      .dimension-name {
+        min-width: 0;
+        border: 0;
+        border-radius: 6px;
+        padding: 4px 6px;
+        background: transparent;
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 720;
+        outline: 0;
+      }
+      .dimension-name:focus { background: var(--accent-soft); }
+      textarea {
+        width: 100%;
+        min-height: 70px;
+        resize: none;
+        border: 0;
+        border-radius: 8px;
+        padding: 7px 8px;
+        background: transparent;
+        color: var(--text);
+        line-height: 1.5;
+        outline: 0;
+      }
+      textarea:focus { background: var(--accent-soft); }
+      textarea[readonly] { color: var(--muted); }
+      .dimension textarea { width: calc(100% - 50px); margin-left: 50px; padding-left: 0; }
+      .small-button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 6px 11px;
+        background: var(--surface);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 650;
+      }
+      .small-button:hover { border-color: var(--accent); color: var(--accent); }
+      .small-button.accept { background: var(--accent-soft); border-color: transparent; color: var(--accent-strong); }
+      .icon-button {
+        width: 25px;
+        height: 25px;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        padding: 0;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 15px;
+      }
+      .icon-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+      .icon-button:hover { background: var(--accent-soft); color: var(--accent-strong); }
+      .icon-button.danger:hover { background: color-mix(in srgb, #b84b4b 12%, transparent); color: #b84b4b; }
+      .empty-document { padding: 36px 12px; color: var(--muted); text-align: center; font-size: 13px; }
+
+      section { padding: 92px 0; }
+      .section-copy { max-width: 660px; margin-bottom: 38px; }
+      h2 { margin: 0 0 14px; font-size: clamp(32px, 4vw, 50px); line-height: 1.08; letter-spacing: -0.04em; }
+      .section-copy p { margin: 0; color: var(--muted); font-size: 17px; }
+      .proof-grid { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 18px; }
+      .proof-main, .proof-side, .api-panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+      .proof-main { padding: 30px; }
+      .proof-main strong { display: block; margin-bottom: 12px; font-size: 26px; letter-spacing: -0.03em; }
+      .proof-main p { margin: 0; color: var(--muted); }
+      .proof-side { display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; }
+      .metric { padding: 24px; }
+      .metric:nth-child(odd) { border-right: 1px solid var(--line); }
+      .metric:nth-child(n + 3) { border-top: 1px solid var(--line); }
+      .metric-value { display: block; font-size: 26px; font-weight: 760; letter-spacing: -0.03em; }
+      .metric-label { color: var(--muted); font-size: 13px; }
+
+      .checklist { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      .check {
+        display: grid;
+        grid-template-columns: 30px 1fr;
+        gap: 12px;
+        align-items: start;
+        padding: 20px;
+        border-radius: var(--radius);
+        background: var(--surface);
+        border: 1px solid var(--line);
+      }
+      .check:last-child { grid-column: 1 / -1; }
+      .check-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--success-soft); color: var(--success); font-weight: 800; }
+      .check strong { display: block; margin-bottom: 3px; }
+      .check span { color: var(--muted); font-size: 14px; }
+
+      .api-panel { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 22px; padding: 26px; }
+      .api-panel h3 { margin: 0 0 4px; font-size: 18px; }
+      .api-panel p { margin: 0; color: var(--muted); }
+      code { display: inline-block; margin-top: 10px; color: var(--accent-strong); font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; }
+      .copy-feedback { min-height: 24px; margin-top: 8px; color: var(--success); font-size: 13px; }
+      footer { padding: 36px 0 48px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); }
+
+      @media (max-width: 900px) {
+        .hero { grid-template-columns: 1fr; gap: 40px; min-height: auto; }
+        .proof-grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 680px) {
+        .shell { width: min(100% - 28px, 1280px); }
+        .brand span:last-child { display: none; }
+        .hero { padding: 46px 0 60px; }
+        h1 { font-size: 46px; }
+        section { padding: 66px 0; }
+        .document-grid { grid-template-columns: 1fr; }
+        .document-body { max-height: 460px; }
+        .window-meta { display: none; }
+        .document-head { align-items: flex-start; flex-direction: column; }
+        .document-head-actions { width: 100%; }
+        .document-head-actions .small-button { flex: 1; }
+        .checklist { grid-template-columns: 1fr; }
+        .check:last-child { grid-column: auto; }
+        .api-panel { grid-template-columns: 1fr; }
+        .api-panel .button { width: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="shell">
+      <nav aria-label="主导航">
+        <div class="brand"><span class="brand-mark">PI</span><span>Prompt 迭代助手</span></div>
+        <div class="live-status"><span class="status-dot" aria-hidden="true"></span><span id="service-status">正在检查服务</span></div>
+      </nav>
+    </header>
+
+    <main>
+      <div class="shell hero">
+        <div>
+          <p class="eyebrow">可操作验收预览</p>
+          <h1>整篇管理，逐段决定。</h1>
+          <p class="lede">12 个维度组成一份完整 Prompt。逐段决定，最后整篇复制。</p>
+          <div class="actions">
+            <a class="button primary" href="#demo">开始验收</a>
+            <a class="button" href="/health" target="_blank" rel="noreferrer">查看健康接口</a>
+          </div>
+        </div>
+
+        <div class="workspace" id="demo" aria-label="Prompt 双栏交互演示">
+          <div class="window-bar">
+            <span class="window-title">客服 Agent Prompt</span>
+            <span class="window-meta" id="workspace-status" aria-live="polite">工作稿已自动保存</span>
+          </div>
+          <div class="document-grid" id="document-grid">
+            <article class="prompt-document current" aria-label="当前完整 Prompt">
+              <div class="document-grip-row"><span class="drag-handle" draggable="true" tabindex="0" role="button" data-document-handle="current" aria-label="拖动用户 Prompt 调整左右顺序" title="左右拖动">⠿</span></div>
+              <div class="document-head">
+                <div><span class="document-title">用户 Prompt</span><span class="document-caption">维度结构与内容都可编辑</span></div>
+                <div class="document-head-actions">
+                  <button class="small-button" type="button" id="add-dimension-button">新增维度</button>
+                  <button class="icon-button" type="button" id="copy-prompt-button" aria-label="复制完整 Prompt" title="复制完整 Prompt"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="10" height="10" rx="1.5"></rect><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"></path></svg></button>
+                </div>
+              </div>
+              <div class="document-body" id="current-document"></div>
+            </article>
+            <article class="prompt-document" aria-label="AI 候选完整 Prompt">
+              <div class="document-grip-row"><span class="drag-handle" draggable="true" tabindex="0" role="button" data-document-handle="candidate" aria-label="拖动 AI 生成 Prompt 调整左右顺序" title="左右拖动">⠿</span></div>
+              <div class="document-head">
+                <div><span class="document-title">AI 生成 Prompt</span><span class="document-caption" id="dimension-count">12 个维度</span></div>
+                <button class="icon-button" type="button" id="copy-candidate-button" aria-label="复制完整候选" title="复制完整候选"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="10" height="10" rx="1.5"></rect><path d="M6 15H5.5A1.5 1.5 0 0 1 4 13.5v-8A1.5 1.5 0 0 1 5.5 4h8A1.5 1.5 0 0 1 15 5.5V6"></path></svg></button>
+              </div>
+              <div class="document-body" id="candidate-document"></div>
+            </article>
+          </div>
+        </div>
+      </div>
+
+      <section class="shell" aria-labelledby="proof-title">
+        <div class="section-copy">
+          <h2 id="proof-title">现在已经能做什么</h2>
+          <p>第一阶段的完整 Prompt 编辑、双栏对照、独立复制与版本历史已完成。</p>
+        </div>
+        <div class="proof-grid">
+          <div class="proof-main">
+            <strong>数据仍然留在你的 Mac</strong>
+            <p>云端链接只用于展示和联调。Prompt、版本和 API Key 不会保存到这个服务。</p>
+          </div>
+          <div class="proof-side">
+            <div class="metric"><span class="metric-value">12</span><span class="metric-label">默认 Prompt 维度</span></div>
+            <div class="metric"><span class="metric-value">5</span><span class="metric-label">核心自动化测试</span></div>
+            <div class="metric"><span class="metric-value">Xcode</span><span class="metric-label">原生 macOS 工程</span></div>
+            <div class="metric"><span class="metric-value">Local</span><span class="metric-label">SQLite 本地存储</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="shell" aria-labelledby="accept-title">
+        <div class="section-copy">
+          <h2 id="accept-title">你可以这样验收</h2>
+          <p>先在上方编辑多个维度、对照候选并复制整篇，再判断产品方向是否正确。</p>
+        </div>
+        <div class="checklist">
+          <div class="check"><span class="check-mark">✓</span><div><strong>12 个维度属于同一份文档</strong><span>栏目都在一个外框内，不再被拆成独立卡片。</span></div></div>
+          <div class="check"><span class="check-mark">✓</span><div><strong>左侧手柄调整维度</strong><span>上下拖动即可排序，也可以改名、删除或隐藏。</span></div></div>
+          <div class="check"><span class="check-mark">✓</span><div><strong>顶部手柄调换 Prompt</strong><span>左右拖动即可交换用户 Prompt 和 AI 生成 Prompt。</span></div></div>
+          <div class="check"><span class="check-mark">✓</span><div><strong>内容由用户决定</strong><span>AI 候选不会覆盖原稿，用户自行复制粘贴。</span></div></div>
+          <div class="check"><span class="check-mark">✓</span><div><strong>复制的是 Markdown Prompt</strong><span>按当前顺序复制所有未隐藏维度，标题使用一级标题格式。</span></div></div>
+        </div>
+      </section>
+
+      <section class="shell" aria-labelledby="api-title">
+        <div class="section-copy">
+          <h2 id="api-title">开发联调入口</h2>
+          <p>下一步接入 DeepSeek 时，我会再向你索取 API Key，并说明配置位置。</p>
+        </div>
+        <div class="api-panel">
+          <div>
+            <h3>公网健康检查</h3>
+            <p>返回服务是否正常，不包含任何业务数据。</p>
+            <code id="health-url"></code>
+            <div class="copy-feedback" id="copy-feedback" aria-live="polite"></div>
+          </div>
+          <button class="button" id="copy-button" type="button">复制接口地址</button>
+        </div>
+      </section>
+    </main>
+
+    <footer><div class="shell">Prompt 迭代助手验收预览。正式产品为本地原生 macOS App。</div></footer>
+
+    <script>
+      const dimensions = [
+        ["角色与定位", "你是一名客服助手，负责准确回答用户问题。", "你是一名耐心、准确的客服助手。先确认用户意图，再给出可执行的答复。"],
+        ["任务目标", "解决用户当前问题。", "优先解决当前问题，并让用户清楚知道下一步怎么做。"],
+        ["背景与上下文", "服务于订阅制效率工具。", "你服务于一款订阅制效率工具，需要结合套餐、账单和账户状态回答。"],
+        ["输入与变量", "接收用户消息。", "输入包含用户消息、账户状态、当前套餐和最近一次操作结果。"],
+        ["意图识别与澄清", "信息不足时继续询问。", "先判断意图。缺少关键条件时只追问一个最影响结论的问题。"],
+        ["工作流程", "理解问题后回答。", "识别意图，检查上下文，形成方案，核对风险，然后输出答复。"],
+        ["工具使用", "需要时查询帮助中心。", "仅在答案依赖实时账户信息时调用工具，并说明查询失败后的替代办法。"],
+        ["输出要求", "回答尽量简短。", "结论放在第一句。需要操作时，使用不超过 5 项的清单。"],
+        ["质量标准", "确保回答正确。", "答案必须准确、具体、可执行，不猜测账户状态，不遗漏关键限制。"],
+        ["约束与禁止事项", "不要泄露隐私。", "不得编造政策、承诺未确认的退款结果，或暴露用户及内部系统信息。"],
+        ["异常与兜底", "无法回答时转人工。", "工具失败或规则冲突时说明原因，保留已知事实，并给出人工处理入口。"],
+        ["示例", "用户问退款时说明规则。", "用户问退款时，先说明是否满足条件，再列出路径和预计处理时间。"],
+      ].map(([title, current, candidate]) => ({ title, current, candidate, hidden: false }));
+      const currentDocument = document.querySelector("#current-document");
+      const candidateDocument = document.querySelector("#candidate-document");
+      const documentGrid = document.querySelector("#document-grid");
+      const currentPrompt = document.querySelector(".prompt-document.current");
+      const candidatePrompt = document.querySelector(".prompt-document:not(.current)");
+      const workspaceStatus = document.querySelector("#workspace-status");
+      const healthUrl = `${window.location.origin}/health`;
+      let currentOnLeft = true;
+      let draggedDimensionIndex = null;
+      let draggedPrompt = null;
+      document.querySelector("#health-url").textContent = healthUrl;
+
+      function escapeHTML(value) {
+        return value.replace(/[&<>"']/g, (character) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+        })[character]);
+      }
+
+      function currentSectionMarkup(dimension, index) {
+        const visibilityLabel = dimension.hidden ? "加入复制" : "从复制中隐藏";
+        return `<section class="dimension ${dimension.hidden ? "is-hidden" : ""}" data-dimension-index="${index}"><div class="dimension-header"><span class="drag-handle" draggable="true" tabindex="0" role="button" data-drag-index="${index}" aria-label="拖动${escapeHTML(dimension.title || "未命名维度")}" title="上下拖动">⠿</span><span class="markdown-mark" aria-hidden="true">#</span><input class="dimension-name" data-field="title" data-index="${index}" value="${escapeHTML(dimension.title)}" aria-label="维度名称"><div class="dimension-tools"><button class="icon-button" type="button" data-toggle-hidden="${index}" aria-label="${visibilityLabel}" title="${visibilityLabel}">${dimension.hidden ? "○" : "◉"}</button><button class="icon-button danger" type="button" data-delete="${index}" aria-label="删除维度" title="删除维度">×</button></div></div><textarea data-field="current" data-index="${index}" aria-label="${escapeHTML(dimension.title || "未命名维度")}内容">${escapeHTML(dimension.current)}</textarea></section>`;
+      }
+
+      function candidateSectionMarkup(dimension, index) {
+        return `<section class="dimension ${dimension.hidden ? "is-hidden" : ""}" data-dimension-index="${index}"><div class="section-title"><span aria-hidden="true"></span><span class="markdown-mark" aria-hidden="true">#</span><span data-candidate-title="${index}">${escapeHTML(dimension.title || "未命名维度")}</span><span aria-hidden="true"></span></div><textarea readonly data-field="candidate" data-index="${index}" aria-label="候选${escapeHTML(dimension.title || "未命名维度")}">${escapeHTML(dimension.candidate)}</textarea></section>`;
+      }
+
+      function renderDocuments() {
+        const empty = '<div class="empty-document">还没有维度。点击“新增维度”开始。</div>';
+        currentDocument.innerHTML = dimensions.length ? dimensions.map(currentSectionMarkup).join("") : empty;
+        candidateDocument.innerHTML = dimensions.length ? dimensions.map(candidateSectionMarkup).join("") : empty;
+        const includedCount = dimensions.filter((dimension) => !dimension.hidden).length;
+        document.querySelector("#dimension-count").textContent = `${dimensions.length} 个维度，${includedCount} 个参与复制`;
+      }
+
+      function promptText(field) {
+        return dimensions
+          .filter((dimension) => !dimension.hidden)
+          .map((dimension) => {
+            const title = dimension.title.trim();
+            const content = dimension[field].trim();
+            return [title ? `# ${title}` : "", content].filter(Boolean).join("\n");
+          })
+          .filter(Boolean)
+          .join("\n\n");
+      }
+
+      function moveDimension(from, to) {
+        if (!dimensions[from] || !dimensions[to] || from === to) return false;
+        const [moved] = dimensions.splice(from, 1);
+        dimensions.splice(to, 0, moved);
+        renderDocuments();
+        workspaceStatus.textContent = "维度顺序已调整";
+        return true;
+      }
+
+      function swapPrompts() {
+        documentGrid.append(currentOnLeft ? currentPrompt : candidatePrompt);
+        currentOnLeft = !currentOnLeft;
+        workspaceStatus.textContent = currentOnLeft ? "用户 Prompt 已回到左侧" : "左右 Prompt 已调换";
+      }
+
+      async function copyText(content, message) {
+        try {
+          await navigator.clipboard.writeText(content);
+          workspaceStatus.textContent = message;
+        } catch {
+          workspaceStatus.textContent = "复制失败，请允许剪贴板权限";
+        }
+      }
+
+      renderDocuments();
+
+      currentDocument.addEventListener("input", (event) => {
+        const index = Number(event.target.dataset.index);
+        const field = event.target.dataset.field;
+        if (!Number.isInteger(index) || !dimensions[index] || !field) return;
+        dimensions[index][field] = event.target.value;
+        if (field === "title") {
+          candidateDocument.querySelector(`[data-candidate-title="${index}"]`).textContent = event.target.value || "未命名维度";
+        }
+        workspaceStatus.textContent = "工作稿已自动保存";
+      });
+
+      currentDocument.addEventListener("click", (event) => {
+        const remove = event.target.closest("[data-delete]");
+        const toggle = event.target.closest("[data-toggle-hidden]");
+        if (!remove && !toggle) return;
+        const index = Number(remove?.dataset.delete ?? toggle.dataset.toggleHidden);
+        if (remove) {
+          if (!window.confirm(`删除维度“${dimensions[index].title || "未命名维度"}”？`)) return;
+          dimensions.splice(index, 1);
+          workspaceStatus.textContent = "维度已删除";
+        } else {
+          dimensions[index].hidden = !dimensions[index].hidden;
+          workspaceStatus.textContent = dimensions[index].hidden ? "该维度已隐藏，复制时会排除" : "该维度已加入复制";
+        }
+        renderDocuments();
+      });
+
+      currentDocument.addEventListener("dragstart", (event) => {
+        const handle = event.target.closest("[data-drag-index]");
+        if (!handle) return;
+        draggedDimensionIndex = Number(handle.dataset.dragIndex);
+        handle.closest(".dimension").classList.add("dragging");
+        candidateDocument.querySelector(`[data-dimension-index="${draggedDimensionIndex}"]`)?.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", String(draggedDimensionIndex));
+      });
+
+      currentDocument.addEventListener("dragover", (event) => {
+        const target = event.target.closest("[data-dimension-index]");
+        if (!target || draggedDimensionIndex === null) return;
+        event.preventDefault();
+        documentGrid.querySelectorAll(".dimension.drop-target").forEach((item) => item.classList.remove("drop-target"));
+        target.classList.add("drop-target");
+        candidateDocument.querySelector(`[data-dimension-index="${target.dataset.dimensionIndex}"]`)?.classList.add("drop-target");
+      });
+
+      currentDocument.addEventListener("drop", (event) => {
+        const target = event.target.closest("[data-dimension-index]");
+        if (!target || draggedDimensionIndex === null) return;
+        event.preventDefault();
+        moveDimension(draggedDimensionIndex, Number(target.dataset.dimensionIndex));
+        draggedDimensionIndex = null;
+      });
+
+      currentDocument.addEventListener("dragend", () => {
+        draggedDimensionIndex = null;
+        documentGrid.querySelectorAll(".dimension.dragging, .dimension.drop-target").forEach((item) => item.classList.remove("dragging", "drop-target"));
+      });
+
+      currentDocument.addEventListener("keydown", (event) => {
+        const handle = event.target.closest("[data-drag-index]");
+        if (!handle || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault();
+        const from = Number(handle.dataset.dragIndex);
+        const to = from + (event.key === "ArrowUp" ? -1 : 1);
+        if (moveDimension(from, to)) currentDocument.querySelector(`[data-drag-index="${to}"]`).focus();
+      });
+
+      document.querySelector("#add-dimension-button").addEventListener("click", () => {
+        dimensions.push({ title: "新维度", current: "", candidate: "", hidden: false });
+        renderDocuments();
+        const title = currentDocument.querySelector(`[data-field="title"][data-index="${dimensions.length - 1}"]`);
+        title.focus();
+        title.select();
+        currentDocument.scrollTop = currentDocument.scrollHeight;
+        workspaceStatus.textContent = "已新增维度";
+      });
+
+      document.querySelector("#copy-prompt-button").addEventListener("click", async () => {
+        const count = dimensions.filter((dimension) => !dimension.hidden).length;
+        await copyText(promptText("current"), `已复制 Markdown Prompt，共 ${count} 个维度`);
+      });
+      document.querySelector("#copy-candidate-button").addEventListener("click", async () => {
+        const count = dimensions.filter((dimension) => !dimension.hidden).length;
+        await copyText(promptText("candidate"), `已复制 Markdown 候选，共 ${count} 个维度`);
+      });
+      documentGrid.addEventListener("dragstart", (event) => {
+        const handle = event.target.closest("[data-document-handle]");
+        if (!handle) return;
+        draggedPrompt = handle.closest(".prompt-document");
+        draggedPrompt.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", handle.dataset.documentHandle);
+      });
+      documentGrid.addEventListener("dragover", (event) => {
+        const target = event.target.closest(".prompt-document");
+        if (!target || !draggedPrompt || target === draggedPrompt) return;
+        event.preventDefault();
+        target.classList.add("drop-target");
+      });
+      documentGrid.addEventListener("drop", (event) => {
+        const target = event.target.closest(".prompt-document");
+        if (!target || !draggedPrompt || target === draggedPrompt) return;
+        event.preventDefault();
+        swapPrompts();
+      });
+      documentGrid.addEventListener("dragend", () => {
+        draggedPrompt = null;
+        documentGrid.querySelectorAll(".dragging, .drop-target").forEach((item) => item.classList.remove("dragging", "drop-target"));
+      });
+      documentGrid.addEventListener("keydown", (event) => {
+        const handle = event.target.closest("[data-document-handle]");
+        if (!handle || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+        event.preventDefault();
+        const handleOnLeft = handle.dataset.documentHandle === "current" ? currentOnLeft : !currentOnLeft;
+        const wantsLeft = event.key === "ArrowLeft";
+        if (handleOnLeft !== wantsLeft) swapPrompts();
+      });
+      document.querySelector("#copy-button").addEventListener("click", async () => {
+        await navigator.clipboard.writeText(healthUrl);
+        document.querySelector("#copy-feedback").textContent = "已复制";
+      });
+
+      fetch("/health")
+        .then((response) => {
+          if (!response.ok) throw new Error("health check failed");
+          return response.json();
+        })
+        .then(() => { document.querySelector("#service-status").textContent = "预览服务正常"; })
+        .catch(() => {
+          document.querySelector("#service-status").textContent = "服务检查失败";
+          document.querySelector(".status-dot").style.background = "#b84b4b";
+        });
+    </script>
+  </body>
+</html>

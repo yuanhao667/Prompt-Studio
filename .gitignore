@@ -1,0 +1,9 @@
+.build/
+.DerivedData/
+xcuserdata/
+.vefaas/
+.swiftpm/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
