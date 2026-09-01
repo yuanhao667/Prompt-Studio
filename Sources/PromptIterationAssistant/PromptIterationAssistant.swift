@@ -923,6 +923,7 @@ final class AppModel: ObservableObject {
   let databaseURL: URL
   let documentURL: URL?
   private var repository: WorkspaceRepository?
+  private var testedDeepSeekSettings: [String]?
 
   init(documentURL: URL? = nil) {
     self.documentURL = documentURL?.standardizedFileURL
@@ -1261,6 +1262,7 @@ final class AppModel: ObservableObject {
     let baseURL = deepSeekBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
       .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     let model = deepSeekModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    let settings = [apiKey, baseURL, model]
 
     guard !apiKey.isEmpty else {
       deepSeekConnectionSucceeded = false
@@ -1288,8 +1290,10 @@ final class AppModel: ObservableObject {
       deepSeekAPIKey = apiKey
       deepSeekBaseURL = baseURL
       deepSeekModel = model
-      deepSeekConnectionSucceeded = nil
-      deepSeekConnectionMessage = "配置已保存，尚未测试"
+      if deepSeekConnectionSucceeded != true || testedDeepSeekSettings != settings {
+        deepSeekConnectionSucceeded = nil
+        deepSeekConnectionMessage = "配置已保存，尚未测试"
+      }
       status = "DeepSeek 配置已保存到本机"
       return true
     } catch {
@@ -1333,6 +1337,7 @@ final class AppModel: ObservableObject {
         }
 
         isTestingDeepSeek = false
+        testedDeepSeekSettings = [deepSeekAPIKey, deepSeekBaseURL, deepSeekModel]
         deepSeekConnectionSucceeded = true
         deepSeekConnectionMessage = "连接成功，所选模型可以使用"
         status = "DeepSeek 连接测试成功"
