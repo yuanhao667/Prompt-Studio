@@ -1762,6 +1762,7 @@ enum WorkspacePage {
 private struct DeepSeekSettingsView: View {
   @ObservedObject var model: AppModel
   @State private var revealsAPIKey = false
+  @State private var showsSaveToast = false
 
   var body: some View {
     ScrollView {
@@ -1864,7 +1865,14 @@ private struct DeepSeekSettingsView: View {
           Spacer()
           Button("测试连接") { model.testDeepSeekConnection() }
             .disabled(model.isTestingDeepSeek)
-          Button("保存") { model.saveDeepSeekSettings() }
+          Button("保存") {
+            guard model.saveDeepSeekSettings() else { return }
+            withAnimation { showsSaveToast = true }
+            Task {
+              try? await Task.sleep(nanoseconds: 2_000_000_000)
+              withAnimation { showsSaveToast = false }
+            }
+          }
             .buttonStyle(.borderedProminent)
         }
 
@@ -1877,6 +1885,20 @@ private struct DeepSeekSettingsView: View {
       .padding(.horizontal, 28)
       .padding(.vertical, 20)
       .frame(maxWidth: .infinity, alignment: .top)
+    }
+    .overlay(alignment: .top) {
+      if showsSaveToast {
+        Label("保存成功", systemImage: "checkmark.circle.fill")
+          .font(.callout.weight(.medium))
+          .foregroundStyle(.green)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 9)
+          .background(.regularMaterial, in: Capsule())
+          .overlay(Capsule().stroke(.separator))
+          .shadow(radius: 6, y: 2)
+          .padding(.top, 14)
+          .transition(.move(edge: .top).combined(with: .opacity))
+      }
     }
   }
 }
