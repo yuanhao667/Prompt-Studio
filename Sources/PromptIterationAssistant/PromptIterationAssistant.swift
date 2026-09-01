@@ -235,11 +235,12 @@ struct AppRootView: View {
   }
 
   private var launchPage: some View {
-    VStack(alignment: .leading, spacing: 32) {
+    VStack(alignment: .leading, spacing: 52) {
       VStack(alignment: .leading, spacing: 8) {
         Text("Prompt 迭代助手")
-          .font(.largeTitle.bold())
+          .font(.system(size: 42, weight: .bold))
         Text("选择一个本地 Markdown 工作区开始编写 System Prompt")
+          .font(.title3)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.leading)
       }
@@ -260,8 +261,8 @@ struct AppRootView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(.horizontal, 40)
-    .padding(.bottom, 72)
+    .frame(maxWidth: 720)
+    .padding(.horizontal, 48)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     .background(Color(nsColor: .windowBackgroundColor))
   }
@@ -273,7 +274,7 @@ struct AppRootView: View {
     action: @escaping () -> Void
   ) -> some View {
     Button(action: action) {
-      VStack(alignment: .leading, spacing: 12) {
+      VStack(alignment: .leading, spacing: 8) {
         Image(systemName: systemImage)
           .font(.system(size: 28))
           .foregroundStyle(.blue)
@@ -283,8 +284,8 @@ struct AppRootView: View {
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.leading)
       }
-      .padding(20)
-      .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
+      .padding(18)
+      .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
       .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
       .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
     }
