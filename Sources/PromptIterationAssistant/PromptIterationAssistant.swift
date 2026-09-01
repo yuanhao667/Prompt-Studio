@@ -1899,7 +1899,22 @@ struct ContentView: View {
   }
 
   private var settingsPage: some View {
-    DeepSeekSettingsView(model: model)
+    VStack(alignment: .leading, spacing: 0) {
+      Button { page = .editor } label: {
+        Image(systemName: "chevron.left")
+          .font(.system(size: 18, weight: .semibold))
+          .frame(width: 36, height: 36)
+          .background(Color(nsColor: .controlBackgroundColor), in: Circle())
+          .overlay(Circle().stroke(Color(nsColor: .separatorColor)))
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("返回编辑页")
+      .padding(.leading, 14)
+      .padding(.top, 8)
+
+      DeepSeekSettingsView(model: model)
+    }
   }
 
   @ViewBuilder
