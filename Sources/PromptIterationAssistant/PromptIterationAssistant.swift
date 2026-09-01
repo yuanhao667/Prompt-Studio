@@ -200,6 +200,7 @@ final class AppModel: ObservableObject {
       )
       try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
       comparison = snapshot
+      currentOnLeading = false
       status = "已将 V\(version.number) 调入对比区"
     } catch { report(error) }
   }
@@ -222,17 +223,37 @@ final class AppModel: ObservableObject {
     status = "已复制历史版本 V\(version.number)"
   }
 
-  func restoreSelectedHistory() {
-    guard let workspace, let version = selectedHistoryVersion, let repository else { return }
+  @discardableResult
+  func startEditingHistory(_ version: VersionSummary) -> Bool {
+    guard let workspace, let repository else { return false }
     do {
+      let sections = try repository.versionSections(projectID: workspace.id, number: version.number)
+      let snapshot = ComparisonSnapshot(
+        kind: .history,
+        sourceVersion: version.number,
+        sections: sections.map {
+          ComparisonSection(
+            sectionID: $0.id,
+            title: $0.title,
+            content: $0.content,
+            position: $0.position
+          )
+        }
+      )
       self.workspace = try repository.restoreVersionAsDraft(
         workspace: workspace,
         number: version.number
       )
+      try repository.saveComparison(projectID: workspace.id, snapshot: snapshot)
+      comparison = snapshot
+      currentOnLeading = false
       hasUnversionedChanges = true
-      syncManualComparisonStructure()
-      status = "已将 V\(version.number) 恢复为当前工作稿"
-    } catch { report(error) }
+      status = "正在基于 V\(version.number) 编辑下一版"
+      return true
+    } catch {
+      report(error)
+      return false
+    }
   }
 
   func clearComparison() {
@@ -412,10 +433,9 @@ private enum WorkspacePage: String, CaseIterable, Identifiable {
 struct ContentView: View {
   @ObservedObject var model: AppModel
   @State private var pendingDeletion: PromptSection?
+  @State private var pendingHistoryEdit: VersionSummary?
   @State private var page: WorkspacePage = .editor
   @State private var versionSearch = ""
-  @State private var onlyShowHistoryChanges = false
-  @State private var confirmsHistoryRestore = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -457,14 +477,20 @@ struct ContentView: View {
       Text("该栏目会从当前工作稿和手动候选中删除；已保存的正式版本不受影响。")
     }
     .confirmationDialog(
-      "恢复这个历史版本？",
-      isPresented: $confirmsHistoryRestore,
+      "从 V\(pendingHistoryEdit?.number ?? 0) 开始编辑？",
+      isPresented: Binding(
+        get: { pendingHistoryEdit != nil },
+        set: { if !$0 { pendingHistoryEdit = nil } }
+      ),
       titleVisibility: .visible
     ) {
-      Button("恢复为工作稿") { model.restoreSelectedHistory() }
-      Button("取消", role: .cancel) {}
+      Button("创建待迭代版本") {
+        if let version = pendingHistoryEdit { openHistoryEditor(version) }
+        pendingHistoryEdit = nil
+      }
+      Button("取消", role: .cancel) { pendingHistoryEdit = nil }
     } message: {
-      Text("只会替换当前工作稿，已保存的历史版本不会改变。")
+      Text("当前工作稿会替换为这个历史版本，已保存的正式版本不会改变。")
     }
   }
 
@@ -492,7 +518,10 @@ struct ContentView: View {
     Divider()
     if let workspace = model.workspace {
       HStack(alignment: .top, spacing: 12) {
-        if model.currentOnLeading {
+        if model.comparison?.kind == .history {
+          comparisonPane
+          currentPane(workspace)
+        } else if model.currentOnLeading {
           currentPane(workspace)
           comparisonPane
         } else {
@@ -563,11 +592,6 @@ struct ContentView: View {
     return model.versions.filter {
       "V\($0.number) \($0.note) \($0.createdAt)".localizedCaseInsensitiveContains(query)
     }
-  }
-
-  private var visibleHistorySections: [PromptSection] {
-    guard onlyShowHistoryChanges else { return model.selectedHistorySections }
-    return model.selectedHistorySections.filter(historySectionChanged)
   }
 
   @ViewBuilder
@@ -665,42 +689,30 @@ struct ContentView: View {
               .foregroundStyle(.secondary)
           }
           Spacer()
-          Toggle("只看变化", isOn: $onlyShowHistoryChanges)
-            .toggleStyle(.checkbox)
           Button {
             model.copySelectedHistory()
           } label: {
             Image(systemName: "doc.on.doc")
           }
           .help("复制这个版本")
-          Button("恢复为工作稿") { confirmsHistoryRestore = true }
-            .buttonStyle(.borderedProminent)
+          Button("编辑") {
+            if model.hasUnversionedChanges {
+              pendingHistoryEdit = version
+            } else {
+              openHistoryEditor(version)
+            }
+          }
+          .buttonStyle(.borderedProminent)
         }
         .padding(14)
         Divider()
 
-        if visibleHistorySections.isEmpty {
-          VStack(spacing: 10) {
-            Image(systemName: "checkmark.circle")
-              .font(.system(size: 36))
-              .foregroundStyle(.secondary)
-            Text("这个版本与当前工作稿没有维度差异")
-              .foregroundStyle(.secondary)
-          }
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-          ScrollView {
-            LazyVStack(spacing: 0) {
-              ForEach(visibleHistorySections) { section in
-                historySection(section)
-                if section.id != visibleHistorySections.last?.id {
-                  Divider().padding(.vertical, 6)
-                }
-              }
-            }
-            .padding(.horizontal, 18)
-            .padding(.bottom, 18)
-          }
+        ScrollView {
+          Text(PromptMarkdown.render(model.selectedHistorySections))
+            .font(.system(.body, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(18)
         }
       }
     } else {
@@ -710,61 +722,32 @@ struct ContentView: View {
     }
   }
 
-  private func historySection(_ section: PromptSection) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Text("#")
-          .font(.headline.monospaced())
-          .foregroundStyle(.blue)
-        Text(section.title).font(.headline)
-        Spacer()
-        if historySectionChanged(section) {
-          Text("与工作稿不同")
-            .font(.caption)
-            .foregroundStyle(.blue)
-        }
-        if !section.isIncluded {
-          Image(systemName: "eye.slash")
-            .foregroundStyle(.secondary)
-            .help("复制时排除")
-        }
-      }
-      Text(section.content.isEmpty ? "该版本无内容" : section.content)
-        .font(.system(.body, design: .monospaced))
-        .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
-        .padding(.leading, 24)
-    }
-    .padding(.vertical, 10)
-    .opacity(section.isIncluded ? 1 : 0.48)
-  }
-
-  private func historySectionChanged(_ section: PromptSection) -> Bool {
-    guard let current = model.workspace?.sections.first(where: { $0.id == section.id }) else {
-      return true
-    }
-    return current.title != section.title || current.content != section.content
-      || current.isIncluded != section.isIncluded || current.position != section.position
-  }
-
   private func compactDate(_ value: String) -> String {
     String(value.replacingOccurrences(of: "T", with: " ").prefix(16))
   }
 
+  private func openHistoryEditor(_ version: VersionSummary) {
+    if model.startEditingHistory(version) { page = .editor }
+  }
+
   private func currentPane(_ workspace: PromptWorkspace) -> some View {
     VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        Spacer()
-        Image(systemName: "line.3.horizontal")
-          .foregroundStyle(.secondary)
-          .contentShape(Rectangle())
-          .draggable("prompt-pane-current")
-          .help("左右拖动用户 Prompt")
-        Spacer()
+      if model.comparison?.kind != .history {
+        HStack {
+          Spacer()
+          Image(systemName: "line.3.horizontal")
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+            .draggable("prompt-pane-current")
+            .help("左右拖动用户 Prompt")
+          Spacer()
+        }
       }
       HStack {
-        Label("用户 Prompt", systemImage: "pencil.line")
+        Label(
+          model.comparison?.kind == .history ? "待迭代版本" : "用户 Prompt",
+          systemImage: "pencil.line"
+        )
           .font(.headline)
           .foregroundStyle(.blue)
         Spacer()
@@ -799,17 +782,24 @@ struct ContentView: View {
 
   private var comparisonPane: some View {
     VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        Spacer()
-        Image(systemName: "line.3.horizontal")
-          .foregroundStyle(.secondary)
-          .contentShape(Rectangle())
-          .draggable("prompt-pane-comparison")
-          .help("左右拖动 AI 生成 Prompt")
-        Spacer()
+      if model.comparison?.kind != .history {
+        HStack {
+          Spacer()
+          Image(systemName: "line.3.horizontal")
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+            .draggable("prompt-pane-comparison")
+            .help("左右拖动 AI 生成 Prompt")
+          Spacer()
+        }
       }
       HStack {
-        Label("AI 生成 Prompt（\(model.comparisonTitle)）", systemImage: "rectangle.split.2x1")
+        Label(
+          model.comparison?.kind == .history
+            ? model.comparisonTitle : "AI 生成 Prompt（\(model.comparisonTitle)）",
+          systemImage: model.comparison?.kind == .history
+            ? "clock.arrow.circlepath" : "rectangle.split.2x1"
+        )
           .font(.headline)
         Spacer()
         if model.comparison != nil {

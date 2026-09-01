@@ -54,7 +54,7 @@
         justify-content: space-between;
         border-bottom: 1px solid var(--line);
       }
-      .brand, .nav-links, .detail-actions, .filter-row { display: flex; align-items: center; }
+      .brand, .nav-links, .detail-actions, .compare-actions { display: flex; align-items: center; }
       .brand { gap: 12px; color: var(--text); font-weight: 720; letter-spacing: -0.02em; text-decoration: none; }
       .brand-mark {
         width: 32px;
@@ -152,7 +152,6 @@
       .detail-title { margin: 0; font-size: 20px; letter-spacing: -0.025em; }
       .detail-meta { margin-top: 3px; color: var(--muted); font-size: 12px; }
       .detail-actions { flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
-      .filter-row { gap: 7px; color: var(--muted); font-size: 12px; cursor: pointer; }
       .button {
         min-height: 34px;
         display: inline-grid;
@@ -172,28 +171,65 @@
       .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
       .icon-button { width: 34px; padding: 0; font-size: 17px; }
 
-      .summary-strip {
+      .snapshot { max-height: 620px; overflow-y: auto; padding: 20px; }
+      .prompt-text {
+        margin: 0;
+        color: var(--text);
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.68;
+        white-space: pre-wrap;
+      }
+      [hidden] { display: none !important; }
+      .compare-top {
+        min-height: 58px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 12px;
+      }
+      .compare-top h2 { margin: 0; font-size: 22px; letter-spacing: -0.025em; }
+      .compare-actions { gap: 9px; }
+      .compare-window {
+        min-height: 700px;
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: 1fr 1fr;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface-strong);
+        box-shadow: var(--shadow);
+      }
+      .compare-pane { min-width: 0; }
+      .compare-pane + .compare-pane { border-left: 1px solid var(--line); }
+      .compare-pane-head {
+        min-height: 78px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 14px 18px;
         border-bottom: 1px solid var(--line);
         background: var(--surface);
       }
-      .summary-item { padding: 10px 18px; }
-      .summary-item + .summary-item { border-left: 1px solid var(--line); }
-      .summary-value { display: block; font-family: "SFMono-Regular", Consolas, monospace; font-size: 16px; font-weight: 750; }
-      .summary-label { display: block; color: var(--muted); font-size: 11px; }
-
-      .snapshot { max-height: 600px; overflow-y: auto; padding: 4px 20px 22px; }
-      .dimension { padding: 17px 0 13px; }
-      .dimension + .dimension { border-top: 1px solid var(--line); }
-      .dimension.hidden { opacity: 0.48; }
-      .dimension-head { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 7px; align-items: center; }
-      .hash { color: var(--accent-strong); font-family: "SFMono-Regular", Consolas, monospace; font-weight: 750; }
-      .dimension-title { font-size: 13px; font-weight: 750; }
-      .change-label { color: var(--accent-strong); font-size: 10px; font-weight: 700; }
-      .dimension-content { margin: 7px 0 0 21px; color: var(--text); font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; line-height: 1.62; white-space: pre-wrap; }
-      .hidden-copy { margin-left: 7px; color: var(--muted); font-size: 10px; font-weight: 500; }
-      .empty-detail { display: grid; min-height: 430px; place-items: center; color: var(--muted); font-size: 13px; text-align: center; }
+      .compare-pane-title { font-size: 18px; font-weight: 750; }
+      .compare-pane-caption { margin-top: 3px; color: var(--muted); font-size: 12px; }
+      .compare-body { padding: 18px; }
+      .compare-editor {
+        width: 100%;
+        min-height: 560px;
+        resize: none;
+        border: 0;
+        border-radius: 10px;
+        padding: 12px;
+        background: var(--surface);
+        color: var(--text);
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.68;
+        outline: 0;
+      }
+      .compare-editor:focus { box-shadow: inset 0 0 0 1px var(--accent); }
     </style>
   </head>
   <body>
@@ -208,15 +244,16 @@
     </header>
 
     <main class="shell">
-      <div class="page-head">
-        <div>
-          <h1>Prompt 历史版本</h1>
-          <p>每次正式保存都会生成不可变快照。可以查找、预览、复制，或恢复成新的工作稿。</p>
+      <div id="history-view">
+        <div class="page-head">
+          <div>
+            <h1>Prompt 历史版本</h1>
+            <p>找到一个完整版本，复制使用，或以它为参照继续编辑。</p>
+          </div>
+          <div class="page-status" id="page-status" aria-live="polite">正在查看最新版本</div>
         </div>
-        <div class="page-status" id="page-status" aria-live="polite">正在查看最新版本</div>
-      </div>
 
-      <section class="history-window" aria-label="Prompt 历史版本管理演示">
+        <section class="history-window" aria-label="Prompt 历史版本管理演示">
         <aside class="version-panel">
           <div class="version-head">
             <h2 class="panel-title">版本记录</h2>
@@ -235,15 +272,43 @@
               <div class="detail-meta" id="detail-meta"></div>
             </div>
             <div class="detail-actions">
-              <label class="filter-row"><input id="only-changes" type="checkbox" />只看变化</label>
               <button class="button icon-button" id="copy-version" type="button" aria-label="复制这个版本" title="复制这个版本">⧉</button>
-              <button class="button primary" id="restore-version" type="button">恢复为工作稿</button>
+              <button class="button primary" id="edit-version" type="button">编辑</button>
             </div>
           </div>
-          <div class="summary-strip" id="summary-strip"></div>
-          <div class="snapshot" id="snapshot"></div>
+          <pre class="snapshot prompt-text" id="snapshot"></pre>
         </div>
-      </section>
+        </section>
+      </div>
+
+      <div id="compare-view" hidden>
+        <div class="compare-top">
+          <div>
+            <h2>对照编辑 Prompt</h2>
+            <div class="detail-meta">左侧历史版本保持不变，右侧直接编写下一版。</div>
+          </div>
+          <div class="compare-actions">
+            <button class="button" id="back-to-history" type="button">返回历史版本</button>
+            <button class="button primary" id="copy-draft" type="button">复制待迭代版本</button>
+          </div>
+        </div>
+        <section class="compare-window" aria-label="历史版本与待迭代版本对照编辑">
+          <article class="compare-pane">
+            <div class="compare-pane-head">
+              <span class="compare-pane-title" id="compare-history-title"></span>
+              <span class="compare-pane-caption">历史版本，只读</span>
+            </div>
+            <div class="compare-body"><pre class="prompt-text" id="history-prompt"></pre></div>
+          </article>
+          <article class="compare-pane">
+            <div class="compare-pane-head">
+              <span class="compare-pane-title">待迭代版本</span>
+              <span class="compare-pane-caption">在这里编写下一版 Prompt</span>
+            </div>
+            <div class="compare-body"><textarea class="compare-editor" id="draft-prompt" aria-label="待迭代版本 Prompt"></textarea></div>
+          </article>
+        </section>
+      </div>
     </main>
 
     <script>
@@ -277,15 +342,9 @@
         { number: 4, note: "加入输入变量", date: "2026-08-30 11:24", sections: sections({ 3: "输入包含用户消息、账户状态和当前套餐。" }, [11]) },
         { number: 3, note: "首次完整结构", date: "2026-08-29 16:40", sections: sections({ 6: "需要时查询帮助中心。", 10: "无法回答时转人工。", 11: "用户问退款时说明规则。" }) },
       ];
-      const currentSections = sections({
-        2: "你服务于一款订阅制效率工具。回答前先检查套餐、账单、账户状态和用户所在地区。",
-        7: "结论放在第一句。需要操作时，使用不超过 4 项的编号清单。",
-      });
-
       const versionList = document.querySelector("#version-list");
       const snapshot = document.querySelector("#snapshot");
       const search = document.querySelector("#version-search");
-      const onlyChanges = document.querySelector("#only-changes");
       const pageStatus = document.querySelector("#page-status");
       let selectedNumber = versions[0].number;
 
@@ -297,11 +356,6 @@
 
       function selectedVersion() {
         return versions.find((version) => version.number === selectedNumber);
-      }
-
-      function isChanged(section, index) {
-        const current = currentSections[index];
-        return !current || current.title !== section.title || current.content !== section.content || current.hidden !== section.hidden;
       }
 
       function renderVersionList() {
@@ -319,20 +373,9 @@
 
       function renderDetail() {
         const version = selectedVersion();
-        const changed = version.sections.filter(isChanged).length;
-        const included = version.sections.filter((section) => !section.hidden).length;
         document.querySelector("#detail-title").textContent = `版本 V${version.number}`;
         document.querySelector("#detail-meta").textContent = `${version.note}  ${version.date}`;
-        document.querySelector("#summary-strip").innerHTML = `
-          <div class="summary-item"><span class="summary-value">${version.sections.length}</span><span class="summary-label">全部维度</span></div>
-          <div class="summary-item"><span class="summary-value">${included}</span><span class="summary-label">参与复制</span></div>
-          <div class="summary-item"><span class="summary-value">${changed}</span><span class="summary-label">与工作稿不同</span></div>
-        `;
-        const visible = onlyChanges.checked ? version.sections.filter(isChanged) : version.sections;
-        snapshot.innerHTML = visible.length ? visible.map((section, index) => {
-          const originalIndex = version.sections.indexOf(section);
-          return `<article class="dimension ${section.hidden ? "hidden" : ""}"><div class="dimension-head"><span class="hash">#</span><span class="dimension-title">${escapeHTML(section.title)}${section.hidden ? '<span class="hidden-copy">复制时排除</span>' : ""}</span>${isChanged(section, originalIndex) ? '<span class="change-label">与工作稿不同</span>' : ""}</div><p class="dimension-content">${escapeHTML(section.content || "该版本无内容")}</p></article>`;
-        }).join("") : '<div class="empty-detail">这个版本与当前工作稿没有维度差异</div>';
+        snapshot.textContent = markdown(version);
       }
 
       function markdown(version) {
@@ -352,7 +395,6 @@
         render();
       });
       search.addEventListener("input", renderVersionList);
-      onlyChanges.addEventListener("change", renderDetail);
       document.querySelector("#copy-version").addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText(markdown(selectedVersion()));
@@ -361,9 +403,29 @@
           pageStatus.textContent = "复制失败，请允许剪贴板权限";
         }
       });
-      document.querySelector("#restore-version").addEventListener("click", () => {
-        if (!window.confirm(`将 V${selectedNumber} 恢复为当前工作稿？历史版本不会改变。`)) return;
-        pageStatus.textContent = `已将 V${selectedNumber} 恢复为工作稿，可回编辑器继续修改`;
+      document.querySelector("#edit-version").addEventListener("click", () => {
+        const version = selectedVersion();
+        const prompt = markdown(version);
+        document.querySelector("#compare-history-title").textContent = `历史版本 V${version.number}`;
+        document.querySelector("#history-prompt").textContent = prompt;
+        document.querySelector("#draft-prompt").value = prompt;
+        document.querySelector("#history-view").hidden = true;
+        document.querySelector("#compare-view").hidden = false;
+        window.scrollTo({ top: 0 });
+      });
+      document.querySelector("#back-to-history").addEventListener("click", () => {
+        document.querySelector("#compare-view").hidden = true;
+        document.querySelector("#history-view").hidden = false;
+        pageStatus.textContent = `正在查看 V${selectedNumber}`;
+        window.scrollTo({ top: 0 });
+      });
+      document.querySelector("#copy-draft").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(document.querySelector("#draft-prompt").value);
+          document.querySelector("#compare-view .detail-meta").textContent = "已复制待迭代版本";
+        } catch {
+          document.querySelector("#compare-view .detail-meta").textContent = "复制失败，请允许剪贴板权限";
+        }
       });
 
       render();
