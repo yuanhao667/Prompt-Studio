@@ -11,8 +11,9 @@ struct PromptIterationAssistantApp: App {
     WindowGroup {
       AppRootView()
         .frame(minWidth: 1_080, minHeight: 700)
+        .ignoresSafeArea(.container, edges: .top)
     }
-    .windowStyle(.titleBar)
+    .windowStyle(.hiddenTitleBar)
   }
 }
 
@@ -49,7 +50,9 @@ struct AppRootView: View {
             }
             Spacer()
           }
-          .padding(14)
+          .padding(.leading, 82)
+          .padding(.trailing, 14)
+          .padding(.vertical, 14)
           Divider()
           DeepSeekSettingsView(model: launchSettingsModel)
         }
@@ -158,7 +161,8 @@ struct AppRootView: View {
 
       Color.clear.frame(width: 28, height: 28)
     }
-    .padding(.horizontal, 14)
+    .padding(.leading, showsSidebar ? 14 : 82)
+    .padding(.trailing, 14)
     .padding(.vertical, 8)
   }
 
@@ -260,7 +264,9 @@ struct AppRootView: View {
         .buttonStyle(.plain)
         .help("在此文件夹新建 Prompt")
       }
-      .padding(12)
+      .padding(.leading, 82)
+      .padding(.trailing, 12)
+      .padding(.vertical, 12)
       Divider()
 
       ScrollView {
