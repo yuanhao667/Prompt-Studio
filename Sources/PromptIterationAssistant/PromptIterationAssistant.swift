@@ -202,6 +202,7 @@ struct AppRootView: View {
     .padding(.leading, showsSidebar ? 10 : 94)
     .padding(.trailing, 10)
     .frame(height: 28)
+    .padding(.top, 6)
   }
 
   private var launchPage: some View {
