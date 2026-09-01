@@ -1041,6 +1041,19 @@ final class AppModel: ObservableObject {
       .contentModificationDate
   }
 
+  var comparisonLastEditedAt: Date? {
+    guard let comparison else { return nil }
+    if let sourceVersion = comparison.sourceVersion,
+      let createdAt = versions.first(where: { $0.number == sourceVersion })?.createdAt
+    {
+      let formatter = ISO8601DateFormatter()
+      formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      if let date = formatter.date(from: createdAt) { return date }
+    }
+    return try? databaseURL.resourceValues(forKeys: [.contentModificationDateKey])
+      .contentModificationDate
+  }
+
   func selectDeepSeekModel(_ model: String) {
     guard Self.supportedDeepSeekModels.contains(model) else { return }
     deepSeekModel = model
@@ -2335,6 +2348,13 @@ struct ContentView: View {
         .overlay {
           RoundedRectangle(cornerRadius: 10)
             .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        }
+
+        if let lastEditedAt = model.comparisonLastEditedAt {
+          Text("最后编辑时间：\(formattedLastEdited(lastEditedAt))")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.leading, 2)
         }
       } else {
         VStack(spacing: 12) {
