@@ -56,7 +56,7 @@ struct AppRootView: View {
         HSplitView {
           if showsSidebar {
             folderSidebar(folderURL)
-              .frame(minWidth: 210, idealWidth: 230, maxWidth: 320)
+              .frame(minWidth: 180, idealWidth: 200, maxWidth: 260)
           }
           VStack(spacing: 0) {
             workspaceNavigation
@@ -286,30 +286,41 @@ struct AppRootView: View {
         LazyVStack(spacing: 2) {
           ForEach(workspaceItems) { folder in
             VStack(spacing: 2) {
-              Button {
-                if expandedFolderIDs.contains(folder.id) {
-                  expandedFolderIDs.remove(folder.id)
-                } else {
-                  expandedFolderIDs.insert(folder.id)
+              HStack(spacing: 2) {
+                Button {
+                  if expandedFolderIDs.contains(folder.id) {
+                    expandedFolderIDs.remove(folder.id)
+                  } else {
+                    expandedFolderIDs.insert(folder.id)
+                  }
+                } label: {
+                  HStack(spacing: 8) {
+                    Image(
+                      systemName: expandedFolderIDs.contains(folder.id)
+                        ? "chevron.down" : "chevron.right"
+                    )
+                    .font(.caption.bold())
+                    .frame(width: 12)
+                    Image(systemName: "folder")
+                    Text(folder.url.lastPathComponent)
+                      .lineLimit(1)
+                    Spacer()
+                  }
+                  .padding(.leading, 6)
+                  .padding(.vertical, 7)
+                  .contentShape(Rectangle())
                 }
-              } label: {
-                HStack(spacing: 8) {
-                  Image(
-                    systemName: expandedFolderIDs.contains(folder.id)
-                      ? "chevron.down" : "chevron.right"
-                  )
-                  .font(.caption.bold())
-                  .frame(width: 12)
-                  Image(systemName: "folder")
-                  Text(folder.url.lastPathComponent)
-                    .lineLimit(1)
-                  Spacer()
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+
+                Button { createPromptFolder(in: folderURL) } label: {
+                  Image(systemName: "plus")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .help("新建 Prompt")
               }
-              .buttonStyle(.plain)
 
               if expandedFolderIDs.contains(folder.id) {
                 ForEach(folder.children ?? []) { child in
@@ -322,12 +333,6 @@ struct AppRootView: View {
         }
         .padding(8)
       }
-      Spacer()
-      Text(folderURL.path)
-        .font(.caption2)
-        .foregroundStyle(.tertiary)
-        .lineLimit(2)
-        .padding(12)
     }
     .background(Color(nsColor: .controlBackgroundColor))
   }
@@ -1812,6 +1817,13 @@ struct ContentView: View {
   @State private var hoveredSectionID: String?
   @State private var sectionDropTargetID: String?
 
+  private var promptNameFieldWidth: CGFloat {
+    let displayedName = promptName.isEmpty ? "Prompt 名称" : promptName
+    let font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+    let width = (displayedName as NSString).size(withAttributes: [.font: font]).width
+    return min(max(width + 8, 72), 240)
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       if page == .editor {
@@ -1954,7 +1966,7 @@ struct ContentView: View {
           .textFieldStyle(.plain)
           .font(.headline)
           .foregroundStyle(.blue)
-          .frame(minWidth: 100, idealWidth: 180, maxWidth: 260)
+          .frame(width: promptNameFieldWidth, alignment: .leading)
           .onAppear { promptName = workspace.name }
           .onChange(of: model.documentURL) { _ in
             promptName = model.workspace?.name ?? ""
@@ -2015,12 +2027,9 @@ struct ContentView: View {
       .clipShape(RoundedRectangle(cornerRadius: 10))
       .overlay {
         RoundedRectangle(cornerRadius: 10)
-          .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+          .stroke(Color.blue, lineWidth: 2)
       }
     }
-    .padding(12)
-    .background(Color.blue.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
-    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.blue, lineWidth: 2))
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .dropDestination(for: String.self) { items, _ in
       guard items.contains("prompt-pane-comparison") else { return false }
@@ -2108,9 +2117,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
-    .padding(12)
-    .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-    .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .dropDestination(for: String.self) { items, _ in
       guard items.contains("prompt-pane-current") else { return false }
