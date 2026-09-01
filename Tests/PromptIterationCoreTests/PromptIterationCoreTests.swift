@@ -96,6 +96,27 @@ final class PromptIterationCoreTests: XCTestCase {
       "第一版"
     )
   }
+
+  func testRestoreVersionCreatesEditableDraftWithoutChangingHistory() throws {
+    let context = try TestContext()
+    defer { context.cleanup() }
+    var workspace = try context.repository.loadOrCreateWorkspace()
+
+    workspace.sections[0].content = "需要恢复的内容"
+    try context.repository.saveDraft(workspace)
+    _ = try context.repository.saveVersion(workspace: workspace, note: "可恢复版本")
+
+    workspace.sections[0].content = "后来修改的内容"
+    try context.repository.saveDraft(workspace)
+    let restored = try context.repository.restoreVersionAsDraft(workspace: workspace, number: 1)
+
+    XCTAssertEqual(restored.sections[0].content, "需要恢复的内容")
+    XCTAssertEqual(try context.repository.loadOrCreateWorkspace().sections[0].content, "需要恢复的内容")
+    XCTAssertEqual(
+      try context.repository.versionSections(projectID: workspace.id, number: 1)[0].content,
+      "需要恢复的内容"
+    )
+  }
 }
 
 private final class TestContext {

@@ -4,6 +4,7 @@ const path = require("node:path");
 
 const port = Number(process.env.PORT || 8080);
 const previewPage = fs.readFileSync(path.join(__dirname, "index.html"));
+const historyPage = fs.readFileSync(path.join(__dirname, "history.html"));
 
 function send(response, status, body) {
   response.writeHead(status, {
@@ -22,6 +23,15 @@ const server = http.createServer((request, response) => {
       "cache-control": "no-store",
     });
     response.end(previewPage);
+    return;
+  }
+
+  if (request.method === "GET" && (path === "/history" || path === "/history/")) {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(historyPage);
     return;
   }
 

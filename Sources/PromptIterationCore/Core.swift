@@ -466,6 +466,16 @@ public final class WorkspaceRepository {
     }
   }
 
+  public func restoreVersionAsDraft(
+    workspace: PromptWorkspace,
+    number: Int
+  ) throws -> PromptWorkspace {
+    var restored = workspace
+    restored.sections = try versionSections(projectID: workspace.id, number: number)
+    try saveDraft(restored)
+    return restored
+  }
+
   public func saveComparison(projectID: String, snapshot: ComparisonSnapshot) throws {
     try withConnection(write: true) { database in
       try ensureProject(database, projectID: projectID)

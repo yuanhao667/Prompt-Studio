@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Prompt 历史版本 | 验收预览</title>
+    <style>
+      :root {
+        --bg: #f4f6f8;
+        --surface: #fcfcfd;
+        --surface-strong: #ffffff;
+        --text: #172033;
+        --muted: #647086;
+        --line: #dfe4eb;
+        --accent: #1f66d1;
+        --accent-strong: #174d9d;
+        --accent-soft: #e7f0ff;
+        --shadow: 0 24px 70px rgb(30 48 78 / 0.12);
+        --radius: 14px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #10141b;
+          --surface: #171c25;
+          --surface-strong: #1d2430;
+          --text: #f1f5fb;
+          --muted: #a5afbf;
+          --line: #303948;
+          --accent: #73a8ff;
+          --accent-strong: #a6c7ff;
+          --accent-soft: #1d3458;
+          --shadow: 0 24px 70px rgb(0 0 0 / 0.34);
+        }
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      }
+      button, input, a { font: inherit; }
+      button, a { -webkit-tap-highlight-color: transparent; }
+      :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; }
+      .shell { width: min(1320px, calc(100% - 36px)); margin: 0 auto; }
+      nav {
+        height: 68px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand, .nav-links, .detail-actions, .filter-row { display: flex; align-items: center; }
+      .brand { gap: 12px; color: var(--text); font-weight: 720; letter-spacing: -0.02em; text-decoration: none; }
+      .brand-mark {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 14px;
+      }
+      .nav-links { gap: 8px; }
+      .nav-link {
+        min-height: 34px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0 11px;
+        border-radius: 9px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 650;
+        text-decoration: none;
+      }
+      .nav-link:hover, .nav-link.current { background: var(--surface); color: var(--text); }
+
+      main { padding: 28px 0 42px; }
+      .page-head { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+      h1 { margin: 0; font-size: clamp(28px, 3vw, 38px); line-height: 1.1; letter-spacing: -0.035em; }
+      .page-head p { max-width: 580px; margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+      .page-status { color: var(--muted); font-size: 12px; text-align: right; }
+
+      .history-window {
+        min-height: 700px;
+        display: grid;
+        grid-template-columns: 292px minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface-strong);
+        box-shadow: var(--shadow);
+      }
+      .version-panel { min-width: 0; padding: 16px; border-right: 1px solid var(--line); background: var(--surface); }
+      .panel-title { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
+      .panel-caption { margin: 3px 0 13px; color: var(--muted); font-size: 12px; }
+      .search {
+        width: 100%;
+        min-height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 7px 10px;
+        background: var(--surface-strong);
+        color: var(--text);
+        outline: 0;
+      }
+      .search:focus { border-color: var(--accent); }
+      .version-list { display: grid; gap: 6px; margin-top: 12px; }
+      .version-row {
+        width: 100%;
+        border: 0;
+        border-radius: 10px;
+        padding: 10px;
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+        cursor: pointer;
+      }
+      .version-row:hover { background: color-mix(in srgb, var(--accent-soft) 54%, transparent); }
+      .version-row.selected { background: var(--accent-soft); }
+      .version-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .version-number { font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; font-weight: 750; }
+      .current-label { color: var(--accent-strong); font-size: 10px; font-weight: 700; }
+      .version-note { margin-top: 3px; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+      .version-date { margin-top: 4px; color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; }
+      .empty-list { padding: 40px 8px; color: var(--muted); font-size: 13px; text-align: center; }
+
+      .detail-panel { min-width: 0; }
+      .detail-head {
+        min-height: 78px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+      .detail-title { margin: 0; font-size: 20px; letter-spacing: -0.025em; }
+      .detail-meta { margin-top: 3px; color: var(--muted); font-size: 12px; }
+      .detail-actions { flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
+      .filter-row { gap: 7px; color: var(--muted); font-size: 12px; cursor: pointer; }
+      .button {
+        min-height: 34px;
+        display: inline-grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 0 12px;
+        background: var(--surface);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .button:hover { border-color: var(--accent); color: var(--accent-strong); }
+      .button:active { transform: translateY(1px); }
+      .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+      .icon-button { width: 34px; padding: 0; font-size: 17px; }
+
+      .summary-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .summary-item { padding: 10px 18px; }
+      .summary-item + .summary-item { border-left: 1px solid var(--line); }
+      .summary-value { display: block; font-family: "SFMono-Regular", Consolas, monospace; font-size: 16px; font-weight: 750; }
+      .summary-label { display: block; color: var(--muted); font-size: 11px; }
+
+      .snapshot { max-height: 600px; overflow-y: auto; padding: 4px 20px 22px; }
+      .dimension { padding: 17px 0 13px; }
+      .dimension + .dimension { border-top: 1px solid var(--line); }
+      .dimension.hidden { opacity: 0.48; }
+      .dimension-head { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 7px; align-items: center; }
+      .hash { color: var(--accent-strong); font-family: "SFMono-Regular", Consolas, monospace; font-weight: 750; }
+      .dimension-title { font-size: 13px; font-weight: 750; }
+      .change-label { color: var(--accent-strong); font-size: 10px; font-weight: 700; }
+      .dimension-content { margin: 7px 0 0 21px; color: var(--text); font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; line-height: 1.62; white-space: pre-wrap; }
+      .hidden-copy { margin-left: 7px; color: var(--muted); font-size: 10px; font-weight: 500; }
+      .empty-detail { display: grid; min-height: 430px; place-items: center; color: var(--muted); font-size: 13px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <header class="shell">
+      <nav aria-label="主导航">
+        <a class="brand" href="/"><span class="brand-mark">PI</span><span>Prompt 迭代助手</span></a>
+        <div class="nav-links">
+          <a class="nav-link" href="/">编辑器</a>
+          <a class="nav-link current" href="/history" aria-current="page">历史版本</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="shell">
+      <div class="page-head">
+        <div>
+          <h1>Prompt 历史版本</h1>
+          <p>每次正式保存都会生成不可变快照。可以查找、预览、复制，或恢复成新的工作稿。</p>
+        </div>
+        <div class="page-status" id="page-status" aria-live="polite">正在查看最新版本</div>
+      </div>
+
+      <section class="history-window" aria-label="Prompt 历史版本管理演示">
+        <aside class="version-panel">
+          <h2 class="panel-title">版本记录</h2>
+          <p class="panel-caption" id="version-count"></p>
+          <input class="search" id="version-search" type="search" placeholder="搜索版本或备注" aria-label="搜索版本或备注" />
+          <div class="version-list" id="version-list"></div>
+        </aside>
+
+        <div class="detail-panel">
+          <div class="detail-head">
+            <div>
+              <h2 class="detail-title" id="detail-title"></h2>
+              <div class="detail-meta" id="detail-meta"></div>
+            </div>
+            <div class="detail-actions">
+              <label class="filter-row"><input id="only-changes" type="checkbox" />只看变化</label>
+              <button class="button icon-button" id="copy-version" type="button" aria-label="复制这个版本" title="复制这个版本">⧉</button>
+              <button class="button primary" id="restore-version" type="button">恢复为工作稿</button>
+            </div>
+          </div>
+          <div class="summary-strip" id="summary-strip"></div>
+          <div class="snapshot" id="snapshot"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const baseSections = [
+        ["角色与定位", "你是一名耐心、准确的客服助手。先确认用户意图，再给出可执行的答复。"],
+        ["任务目标", "优先解决当前问题，并让用户清楚知道下一步怎么做。"],
+        ["背景与上下文", "你服务于一款订阅制效率工具，需要结合套餐、账单和账户状态回答。"],
+        ["输入与变量", "输入包含用户消息、账户状态、当前套餐和最近一次操作结果。"],
+        ["意图识别与澄清", "先判断意图。缺少关键条件时，只追问一个最影响结论的问题。"],
+        ["工作流程", "识别意图，检查上下文，形成方案，核对风险，然后输出答复。"],
+        ["工具使用", "仅在答案依赖实时账户信息时调用工具。"],
+        ["输出要求", "结论放在第一句。需要操作时，使用不超过 5 项的清单。"],
+        ["质量标准", "答案必须准确、具体、可执行，不猜测账户状态，不遗漏关键限制。"],
+        ["约束与禁止事项", "不得编造政策、承诺未确认的退款结果，或暴露用户及内部系统信息。"],
+        ["异常与兜底", "工具失败时说明原因，并给出人工处理入口。"],
+        ["示例", "用户问退款时，先说明是否满足条件，再列出处理路径。"],
+      ];
+
+      function sections(overrides = {}, hidden = []) {
+        return baseSections.map(([title, content], index) => ({
+          title,
+          content: overrides[index] ?? content,
+          hidden: hidden.includes(index),
+        }));
+      }
+
+      const versions = [
+        { number: 7, note: "增加工具失败兜底", date: "2026-09-01 15:42", sections: sections({ 6: "仅在答案依赖实时账户信息时调用工具。查询失败时保留已知事实，并说明替代路径。", 10: "工具失败或规则冲突时说明原因，保留已知事实，并给出人工处理入口。" }) },
+        { number: 6, note: "压缩输出长度", date: "2026-09-01 13:18", sections: sections({ 7: "结论放在第一句。操作清单不超过 5 项，每项只写一个动作。" }) },
+        { number: 5, note: "明确退款边界", date: "2026-08-31 18:06", sections: sections({ 9: "不得编造政策、承诺未确认的退款结果，或暴露用户及内部系统信息。涉及金额时必须引用已查询事实。" }) },
+        { number: 4, note: "加入输入变量", date: "2026-08-30 11:24", sections: sections({ 3: "输入包含用户消息、账户状态和当前套餐。" }, [11]) },
+        { number: 3, note: "首次完整结构", date: "2026-08-29 16:40", sections: sections({ 6: "需要时查询帮助中心。", 10: "无法回答时转人工。", 11: "用户问退款时说明规则。" }) },
+      ];
+      const currentSections = sections({
+        2: "你服务于一款订阅制效率工具。回答前先检查套餐、账单、账户状态和用户所在地区。",
+        7: "结论放在第一句。需要操作时，使用不超过 4 项的编号清单。",
+      });
+
+      const versionList = document.querySelector("#version-list");
+      const snapshot = document.querySelector("#snapshot");
+      const search = document.querySelector("#version-search");
+      const onlyChanges = document.querySelector("#only-changes");
+      const pageStatus = document.querySelector("#page-status");
+      let selectedNumber = versions[0].number;
+
+      function escapeHTML(value) {
+        return value.replace(/[&<>"']/g, (character) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+        })[character]);
+      }
+
+      function selectedVersion() {
+        return versions.find((version) => version.number === selectedNumber);
+      }
+
+      function isChanged(section, index) {
+        const current = currentSections[index];
+        return !current || current.title !== section.title || current.content !== section.content || current.hidden !== section.hidden;
+      }
+
+      function renderVersionList() {
+        const query = search.value.trim().toLowerCase();
+        const filtered = versions.filter((version) => `v${version.number} ${version.note} ${version.date}`.toLowerCase().includes(query));
+        document.querySelector("#version-count").textContent = `共 ${versions.length} 个不可变快照`;
+        versionList.innerHTML = filtered.length ? filtered.map((version) => `
+          <button class="version-row ${version.number === selectedNumber ? "selected" : ""}" type="button" data-version="${version.number}">
+            <span class="version-main"><span class="version-number">V${version.number}</span>${version.number === versions[0].number ? '<span class="current-label">当前正式版本</span>' : ""}</span>
+            <span class="version-note">${escapeHTML(version.note)}</span>
+            <span class="version-date">${escapeHTML(version.date)}</span>
+          </button>
+        `).join("") : '<div class="empty-list">没有匹配的版本</div>';
+      }
+
+      function renderDetail() {
+        const version = selectedVersion();
+        const changed = version.sections.filter(isChanged).length;
+        const included = version.sections.filter((section) => !section.hidden).length;
+        document.querySelector("#detail-title").textContent = `版本 V${version.number}`;
+        document.querySelector("#detail-meta").textContent = `${version.note}  ${version.date}`;
+        document.querySelector("#summary-strip").innerHTML = `
+          <div class="summary-item"><span class="summary-value">${version.sections.length}</span><span class="summary-label">全部维度</span></div>
+          <div class="summary-item"><span class="summary-value">${included}</span><span class="summary-label">参与复制</span></div>
+          <div class="summary-item"><span class="summary-value">${changed}</span><span class="summary-label">与工作稿不同</span></div>
+        `;
+        const visible = onlyChanges.checked ? version.sections.filter(isChanged) : version.sections;
+        snapshot.innerHTML = visible.length ? visible.map((section, index) => {
+          const originalIndex = version.sections.indexOf(section);
+          return `<article class="dimension ${section.hidden ? "hidden" : ""}"><div class="dimension-head"><span class="hash">#</span><span class="dimension-title">${escapeHTML(section.title)}${section.hidden ? '<span class="hidden-copy">复制时排除</span>' : ""}</span>${isChanged(section, originalIndex) ? '<span class="change-label">与工作稿不同</span>' : ""}</div><p class="dimension-content">${escapeHTML(section.content || "该版本无内容")}</p></article>`;
+        }).join("") : '<div class="empty-detail">这个版本与当前工作稿没有维度差异</div>';
+      }
+
+      function markdown(version) {
+        return version.sections.filter((section) => !section.hidden).map((section) => `# ${section.title}\n${section.content}`).join("\n\n");
+      }
+
+      function render() {
+        renderVersionList();
+        renderDetail();
+      }
+
+      versionList.addEventListener("click", (event) => {
+        const row = event.target.closest("[data-version]");
+        if (!row) return;
+        selectedNumber = Number(row.dataset.version);
+        pageStatus.textContent = `正在查看 V${selectedNumber}`;
+        render();
+      });
+      search.addEventListener("input", renderVersionList);
+      onlyChanges.addEventListener("change", renderDetail);
+      document.querySelector("#copy-version").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(markdown(selectedVersion()));
+          pageStatus.textContent = `已复制 V${selectedNumber} 的 Markdown Prompt`;
+        } catch {
+          pageStatus.textContent = "复制失败，请允许剪贴板权限";
+        }
+      });
+      document.querySelector("#restore-version").addEventListener("click", () => {
+        if (!window.confirm(`将 V${selectedNumber} 恢复为当前工作稿？历史版本不会改变。`)) return;
+        pageStatus.textContent = `已将 V${selectedNumber} 恢复为工作稿，可回编辑器继续修改`;
+      });
+
+      render();
+    </script>
+  </body>
+</html>
