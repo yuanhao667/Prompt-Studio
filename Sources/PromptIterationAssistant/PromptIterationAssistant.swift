@@ -44,6 +44,7 @@ struct AppRootView: View {
   @State private var expandedFolderIDs: Set<String> = []
   @State private var launcherError: String?
   @State private var workspacePage: WorkspacePage = .editor
+  @State private var pageBeforeSettings: WorkspacePage = .editor
   @State private var showsSidebar = true
   @State private var pendingRenameURL: URL?
   @State private var renameText = ""
@@ -173,7 +174,7 @@ struct AppRootView: View {
       .help(showsSidebar ? "收起文件列表" : "展开文件列表")
 
       if workspacePage == .settings {
-        Button { workspacePage = .editor } label: {
+        Button { workspacePage = pageBeforeSettings } label: {
           Image(systemName: "chevron.left")
             .font(.system(size: 18, weight: .semibold))
             .frame(width: 36, height: 36)
@@ -187,7 +188,12 @@ struct AppRootView: View {
 
       Spacer()
       Button {
-        workspacePage = workspacePage == .settings ? .editor : .settings
+        if workspacePage == .settings {
+          workspacePage = pageBeforeSettings
+        } else {
+          pageBeforeSettings = workspacePage
+          workspacePage = .settings
+        }
       } label: {
         Image(systemName: "gearshape")
           .font(.system(size: 18, weight: .semibold))
@@ -201,8 +207,8 @@ struct AppRootView: View {
     }
     .padding(.leading, showsSidebar ? 10 : 94)
     .padding(.trailing, 10)
-    .frame(height: 28)
-    .padding(.top, 6)
+    .frame(height: 36)
+    .padding(.top, 2)
   }
 
   private var launchPage: some View {
