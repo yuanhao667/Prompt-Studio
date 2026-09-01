@@ -467,7 +467,8 @@ struct AppRootView: View {
       .padding(.horizontal, 2)
       .frame(maxWidth: .infinity)
       .background(
-        model?.documentURL?.standardizedFileURL == item.url.standardizedFileURL
+        workspacePage != .history
+          && model?.documentURL?.standardizedFileURL == item.url.standardizedFileURL
           ? Color.blue.opacity(0.14) : Color.clear,
         in: RoundedRectangle(cornerRadius: 7)
       )
@@ -664,6 +665,7 @@ struct AppRootView: View {
         launcherError = "找不到历史版本 V\(number)"
         return
       }
+      if model?.showsComparison == true { model?.clearComparison() }
       model?.selectHistory(version)
       workspacePage = .history
     } catch {
@@ -1044,14 +1046,18 @@ final class AppModel: ObservableObject {
   var comparisonLastEditedAt: Date? {
     guard let comparison else { return nil }
     if let sourceVersion = comparison.sourceVersion,
-      let createdAt = versions.first(where: { $0.number == sourceVersion })?.createdAt
-    {
-      let formatter = ISO8601DateFormatter()
-      formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-      if let date = formatter.date(from: createdAt) { return date }
-    }
+      let date = editedAt(forVersion: sourceVersion) { return date }
     return try? databaseURL.resourceValues(forKeys: [.contentModificationDateKey])
       .contentModificationDate
+  }
+
+  func editedAt(forVersion number: Int) -> Date? {
+    guard let createdAt = versions.first(where: { $0.number == number })?.createdAt else {
+      return nil
+    }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: createdAt)
   }
 
   func selectDeepSeekModel(_ model: String) {
@@ -1439,9 +1445,10 @@ final class AppModel: ObservableObject {
     }
   }
 
-  func generatePrompt() {
+  func generatePrompt(from sourceSections: [PromptSection]? = nil) {
     guard let workspace, let repository else { return }
-    let includedSections = workspace.sections.filter(\.isIncluded)
+    let sourceSections = sourceSections ?? workspace.sections
+    let includedSections = sourceSections.filter(\.isIncluded)
     guard includedSections.contains(where: {
       !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }) else {
@@ -1455,7 +1462,7 @@ final class AppModel: ObservableObject {
     var snapshot = ComparisonSnapshot(
       kind: .manual,
       sourceVersion: nil,
-      sections: workspace.sections.map { section in
+      sections: sourceSections.map { section in
         ComparisonSection(
           sectionID: section.id,
           title: section.title,
@@ -2072,30 +2079,107 @@ struct ContentView: View {
   @ViewBuilder
   private var historyDetail: some View {
     if let version = model.selectedHistoryVersion {
-      VStack(spacing: 0) {
-        HStack(spacing: 8) {
-          Text("V\(version.number)")
-            .font(.caption.bold().monospacedDigit())
-          Text(version.note.isEmpty ? "无备注" : version.note)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          Text(compactDate(version.createdAt))
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.tertiary)
-          Spacer()
+      if model.showsComparison, model.comparison?.kind == .manual {
+        HStack(alignment: .top, spacing: 12) {
+          comparisonPane
+          historyPane(version)
         }
-        .frame(height: 42)
-        .padding(.horizontal, 10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .padding(14)
+      } else {
+        historyPane(version)
+          .padding(14)
+      }
+    } else {
+      Text("从左侧选择一个版本")
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+  }
+
+  private func historyPane(_ version: VersionSummary) -> some View {
+    let emphasizesCurrentVersion = model.showsComparison
+    return VStack(alignment: .leading, spacing: 10) {
+      VStack(spacing: 0) {
+        HStack(spacing: 6) {
+          Text("\(model.workspace?.name ?? "Prompt 项目") V\(version.number)")
+            .font(.headline)
+          Spacer()
+          Button { isPreviewingPrompt.toggle() } label: {
+            Text(isPreviewingPrompt ? "分段" : "预览")
+              .frame(height: 28)
+              .padding(.horizontal, 6)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            if model.deepSeekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+              model.status = "请先配置 DeepSeek API Key"
+              page = .settings
+            } else {
+              model.generatePrompt(from: model.selectedHistorySections)
+            }
+          } label: {
+            Text(model.isGeneratingPrompt ? "生成中" : "AI 生成")
+              .frame(height: 28)
+              .padding(.horizontal, 6)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .disabled(model.isGeneratingPrompt)
+
+          Button { model.copySelectedHistory() } label: {
+            Image(systemName: "doc.on.doc")
+              .frame(width: 28, height: 28)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("复制完整 Prompt")
+        }
+        .foregroundStyle(emphasizesCurrentVersion ? Color.white : Color.primary)
+        .frame(height: 40)
+        .padding(.horizontal, 8)
+        .padding(.leading, 5)
+        .background(
+          emphasizesCurrentVersion ? Color.accentColor : Color(nsColor: .controlBackgroundColor)
+        )
 
         Divider()
 
-        ScrollView {
-          Text(PromptMarkdown.render(model.selectedHistorySections))
-            .font(.system(.body, design: .monospaced))
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(16)
+        if isPreviewingPrompt {
+          ScrollView {
+            Text(PromptMarkdown.render(model.selectedHistorySections))
+              .font(.system(.body, design: .monospaced))
+              .textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .topLeading)
+              .padding(16)
+          }
+        } else {
+          ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+              ForEach(model.selectedHistorySections) { section in
+                VStack(alignment: .leading, spacing: 12) {
+                  HStack(spacing: 10) {
+                    Text("#")
+                      .font(.headline.monospaced())
+                      .foregroundStyle(.blue)
+                    Text(section.title).font(.headline)
+                  }
+                  Text(section.content.isEmpty ? "该栏目无内容" : section.content)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(section.content.isEmpty ? .secondary : .primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+                }
+                .padding(.vertical, 10)
+                if section.id != model.selectedHistorySections.last?.id {
+                  Divider().padding(.vertical, 6)
+                }
+              }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+          }
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2105,16 +2189,15 @@ struct ContentView: View {
         RoundedRectangle(cornerRadius: 10)
           .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
       }
-      .padding(14)
-    } else {
-      Text("从左侧选择一个版本")
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-  }
 
-  private func compactDate(_ value: String) -> String {
-    String(value.replacingOccurrences(of: "T", with: " ").prefix(16))
+      if let lastEditedAt = model.editedAt(forVersion: version.number) {
+        Text("最后编辑时间：\(formattedLastEdited(lastEditedAt))")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.leading, 2)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private func currentPane(_ workspace: PromptWorkspace) -> some View {
@@ -2142,7 +2225,7 @@ struct ContentView: View {
           }
           .textFieldStyle(.plain)
           .font(.headline)
-          .foregroundStyle(.blue)
+          .foregroundStyle(model.showsComparison ? Color.white : Color.blue)
           .frame(width: promptNameFieldWidth, alignment: .leading)
           .onAppear { promptName = workspace.name }
           .onChange(of: model.documentURL) { _ in
@@ -2189,7 +2272,7 @@ struct ContentView: View {
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .foregroundStyle(.blue)
+          .foregroundStyle(model.showsComparison ? Color.white : Color.blue)
           .disabled(model.isGeneratingPrompt)
           .help(model.isGeneratingPrompt ? "生成中" : "AI 生成")
 
@@ -2201,10 +2284,13 @@ struct ContentView: View {
           .buttonStyle(.plain)
           .help("复制完整 Prompt")
         }
+        .foregroundStyle(model.showsComparison ? Color.white : Color.primary)
         .frame(height: 40)
         .padding(.horizontal, 8)
         .padding(.leading, 5)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(
+          model.showsComparison ? Color.accentColor : Color(nsColor: .controlBackgroundColor)
+        )
 
         Divider()
 
@@ -2295,7 +2381,6 @@ struct ContentView: View {
             .font(.headline)
             Button {
               model.clearComparison()
-              page = .editor
             } label: {
               Image(systemName: "xmark")
                 .frame(width: 24, height: 24)
