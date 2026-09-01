@@ -610,6 +610,7 @@ final class AppModel: ObservableObject {
   @Published var showsComparison = false
   @Published var hasUnversionedChanges = false
   @Published var autosaveStatus = "已自动保存"
+  @Published var versionSaveFeedback: String?
   @Published var status = "就绪"
   @Published var errorMessage: String?
   @Published var deepSeekAPIKey = ""
@@ -884,7 +885,13 @@ final class AppModel: ObservableObject {
       selectedHistoryVersion = version
       selectedHistorySections = workspace.sections
       hasUnversionedChanges = false
-      status = "已保存正式版本 V\(version.number)"
+      let feedback = "已保存 V\(version.number)"
+      versionSaveFeedback = feedback
+      status = feedback
+      Task {
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        if versionSaveFeedback == feedback { versionSaveFeedback = nil }
+      }
     } catch { report(error) }
   }
 
@@ -1593,18 +1600,6 @@ struct ContentView: View {
     } else {
       HSplitView {
         VStack(alignment: .leading, spacing: 0) {
-          HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-              Text("历史版本").font(.title2.bold())
-              Text("共 \(model.versions.count) 个不可变快照")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer()
-          }
-          .padding(14)
-          Divider()
-
           VStack(alignment: .leading, spacing: 10) {
             TextField("搜索版本或备注", text: $versionSearch)
               .textFieldStyle(.roundedBorder)
@@ -1663,67 +1658,62 @@ struct ContentView: View {
   @ViewBuilder
   private var historyDetail: some View {
     if let version = model.selectedHistoryVersion {
-      VStack(alignment: .leading, spacing: 0) {
-        HStack(spacing: 12) {
-          VStack(alignment: .leading, spacing: 3) {
-            Text("版本 V\(version.number)").font(.title2.bold())
-            Text("\(version.note.isEmpty ? "无备注" : version.note)  \(compactDate(version.createdAt))")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
+      VStack(spacing: 0) {
+        HStack(spacing: 8) {
+          Text("V\(version.number)")
+            .font(.caption.bold().monospacedDigit())
+          Text(version.note.isEmpty ? "无备注" : version.note)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(compactDate(version.createdAt))
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.tertiary)
           Spacer()
-          Button("编辑") {
+          Button {
             if model.hasUnversionedChanges {
               pendingHistoryEdit = version
             } else {
               openHistoryEditor(version)
             }
+          } label: {
+            Image(systemName: "square.and.pencil")
+              .frame(width: 28, height: 28)
+              .contentShape(Rectangle())
           }
-          .buttonStyle(.borderedProminent)
+          .buttonStyle(.plain)
+          .help("基于这个版本编辑")
+          Button {
+            model.copySelectedHistory()
+          } label: {
+            Image(systemName: "doc.on.doc")
+              .frame(width: 28, height: 28)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("复制这个版本")
         }
-        .padding(14)
+        .frame(height: 42)
+        .padding(.horizontal, 10)
+        .background(Color(nsColor: .controlBackgroundColor))
+
         Divider()
 
-        VStack(spacing: 0) {
-          HStack {
-            Text("Markdown")
-              .font(.caption.monospaced())
-              .foregroundStyle(.secondary)
-            Spacer()
-            Button {
-              model.copySelectedHistory()
-            } label: {
-              Image(systemName: "doc.on.doc")
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("复制这个版本")
-          }
-          .frame(height: 40)
-          .padding(.horizontal, 8)
-          .padding(.leading, 5)
-          .background(Color(nsColor: .controlBackgroundColor))
-
-          Divider()
-
-          ScrollView {
-            Text(PromptMarkdown.render(model.selectedHistorySections))
-              .font(.system(.body, design: .monospaced))
-              .textSelection(.enabled)
-              .frame(maxWidth: .infinity, alignment: .topLeading)
-              .padding(16)
-          }
+        ScrollView {
+          Text(PromptMarkdown.render(model.selectedHistorySections))
+            .font(.system(.body, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(16)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay {
-          RoundedRectangle(cornerRadius: 10)
-            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        }
-        .padding(14)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color(nsColor: .textBackgroundColor))
+      .clipShape(RoundedRectangle(cornerRadius: 10))
+      .overlay {
+        RoundedRectangle(cornerRadius: 10)
+          .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+      }
+      .padding(14)
     } else {
       Text("从左侧选择一个版本")
         .foregroundStyle(.secondary)
@@ -1796,7 +1786,17 @@ struct ContentView: View {
         }
         .buttonStyle(.borderedProminent)
         .disabled(model.isGeneratingPrompt)
-        Button("保存新版本") { model.saveVersion() }
+        Button {
+          model.saveVersion()
+        } label: {
+          if let feedback = model.versionSaveFeedback {
+            Label(feedback, systemImage: "checkmark.circle.fill")
+              .foregroundStyle(.green)
+          } else {
+            Text("保存新版本")
+          }
+        }
+        .disabled(model.versionSaveFeedback != nil)
       }
 
       VStack(spacing: 0) {
