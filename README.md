@@ -10,10 +10,6 @@
 </p>
 
 <p align="center">
-  <a href="#run-app"><img alt="Install from source" src="https://img.shields.io/badge/Install-Run_from_Source-38BDF8?style=for-the-badge&amp;labelColor=111827&amp;logo=xcode&amp;logoColor=white"></a>
-</p>
-
-<p align="center">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-FB923C?style=flat-square&amp;labelColor=111827"></a>
   <img alt="Stage Prototype" src="https://img.shields.io/badge/Stage-Prototype-F59E0B?style=flat-square&amp;labelColor=111827">
   <img alt="macOS 13 or later" src="https://img.shields.io/badge/macOS-13%2B-FFFFFF?style=flat-square&amp;labelColor=111827&amp;logo=apple&amp;logoColor=white">
@@ -22,8 +18,24 @@
 </p>
 
 <p align="center">
+  <a href="#about">产品简介</a>
+  ·
+  <a href="#core-workflow">核心工作流</a>
+  ·
+  <a href="#features">当前能力</a>
+  ·
+  <a href="#data">文件与数据</a>
+  ·
+  <a href="#run-app">安装运行</a>
+  ·
+  <a href="#license">开源许可</a>
+</p>
+
+<p align="center">
   <a href="#core-workflow"><img src="docs/readme-hero.svg" width="100%" alt="Prompt Studio：结构化编辑、AI 对照与版本历史工作流"></a>
 </p>
+
+<a id="about"></a>
 
 ## ✨ 这是什么
 
@@ -39,6 +51,8 @@ Prompt Studio 是一个原生、本地优先的 Prompt 编辑器。它把 Prompt
 2. **比较** — 点击“AI 生成”，在只读 AI 参考稿与可编辑 System Prompt 之间逐段判断和修改。
 3. **沉淀** — 草稿自动保存；确认成果后手动保存为新的不可变版本，随时预览、复制或基于旧版本继续编辑。
 
+<a id="features"></a>
+
 ## 🧩 当前能力
 
 | 能力 | 现在可以做什么 |
@@ -49,6 +63,8 @@ Prompt Studio 是一个原生、本地优先的 Prompt 编辑器。它把 Prompt
 | 版本历史 | 创建连续的 `Vn.md` 快照，预览完整 Markdown，加入对比或基于旧版迭代 |
 | 自动保存 | System Prompt 实时写回本地 Markdown；SQLite 仅保存版本和对照元数据 |
 | 隐私边界 | API Key、接口地址和模型配置保存在当前 Mac 的应用偏好设置中，不写入 Prompt 或 App 包 |
+
+<a id="data"></a>
 
 ## 🗂️ 文件与数据
 
@@ -92,6 +108,8 @@ swift run PromptIterationAssistant --db /tmp/prompt-iteration-demo.db
 ## 🙏 参考来源
 
 SQLite 封装、事务写入和不可变版本思路改编自仓库内的 `prompt-version-manager` 参考实现。第三方许可与说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+<a id="license"></a>
 
 ## 📄 License
 
