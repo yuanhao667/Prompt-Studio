@@ -1,49 +1,98 @@
-# Prompt Studio｜第一阶段原型
+<p align="center">
+  <img src="Sources/PromptIterationAssistant/Assets.xcassets/AppIcon.appiconset/AppIcon-128x128.png" width="96" alt="Prompt Studio app icon">
+</p>
 
-这是一个本地原生 macOS 纵向切片，用于验证结构化双栏编辑、工作稿自动保存和不可变版本历史。
+<h1 align="center">Prompt Studio</h1>
 
-## 当前能力
+<p align="center">
+  面向结构化 Prompt 的本地原生 macOS 工作台。<br>
+  写工作稿、与 AI 参考稿并排比较，并把每一次正式版本留在自己的电脑里。
+</p>
 
-- 每次启动先进入本地工作区页面，可新建 Prompt 文件夹或打开工作区文件夹。
-- 工作区左侧是可收起的 Prompt 文件树，可新建和展开文件夹；普通目录和无关 Markdown 不会被扫入列表。
-- Prompt 文档可重命名、在 Finder 中显示或移到废纸篓。
-- 顶部工具栏只保留 AI 生成和设置；新增维度放在编辑器底部，保存新版本位于当前版本行的三点菜单。
-- 启动页右上角可直接进入 DeepSeek 设置，不需要先创建或打开 Prompt。
-- 正式稿直接读取并自动写回电脑里的 `.md` 文件；不同文件的历史数据彼此隔离。
-- 每个新 Prompt 都自动带出固定的 12 个默认维度标题，用户可继续增删改和排序。
-- 首页初始只显示一个完整的 Markdown Prompt 编辑框。
-- 点击“AI 生成”后才展开左右对照：左侧为只读 AI 参考稿，右侧为可编辑 System Prompt 正式稿。
-- AI 参考稿可整段复制，System Prompt 正式稿可继续增删、排序、编排、粘贴和修改；两个完整 Prompt 仍可左右拖动。
-- 点击左侧 V1/V2 可在右侧以 Markdown 代码框预览，版本行菜单支持“加入对比”、一键复制和基于该版本编辑。
-- 工作稿自动写入 Markdown 文件；只在用户明确选择“保存新版本”时创建新的 Vn 快照。
-- Prompt 名称在 Markdown 卡片顶部直接编辑；版本对比时两栏显示“Prompt 名称 + 版本号”，并可通过名称后的关闭图标退出。
-- 选择版本行的“基于此版本编辑”后，左侧固定显示只读历史版本，右侧从该版本创建待迭代工作稿。
-- 栏目可新增、删除、改名和排序；排序手柄只在悬停当前行时出现，AI 参考稿与 System Prompt 正式稿共享栏目顺序。
-- System Prompt 正式稿实时写入 `.md`；SQLite 只保存该文件对应的版本历史和对照元数据。
-- 完整 Prompt 使用 Markdown 一级标题复制，并排除被隐藏的栏目。
-- 设置页可点击切换 DeepSeek V4 Flash / V4 Pro，并分别验证所选模型是否可用。
-- API Key、接口地址和模型只保存在当前 Mac 的应用偏好设置中，不写入 Prompt 文件或 App 包。
+<p align="center">
+  <a href="#develop-and-test"><img alt="Build in Xcode" src="https://img.shields.io/badge/Build_in_Xcode-查看开发指南-38BDF8?style=for-the-badge&amp;labelColor=111827&amp;logo=xcode&amp;logoColor=white"></a>
+</p>
 
-当前 DMG 用于 Apple Silicon Mac 内测，尚未使用 Apple Developer ID 签名或提交 Apple 公证。
+<p align="center">
+  <img alt="Stage Prototype" src="https://img.shields.io/badge/Stage-Prototype-F59E0B?style=flat-square&amp;labelColor=111827">
+  <img alt="macOS 13 or later" src="https://img.shields.io/badge/macOS-13%2B-FFFFFF?style=flat-square&amp;labelColor=111827&amp;logo=apple&amp;logoColor=white">
+  <img alt="Apple Silicon" src="https://img.shields.io/badge/Architecture-Apple_Silicon-4F8FF7?style=flat-square&amp;labelColor=111827">
+  <img alt="SwiftUI native app" src="https://img.shields.io/badge/SwiftUI-Native-F05138?style=flat-square&amp;labelColor=111827&amp;logo=swift&amp;logoColor=white">
+</p>
 
-## 安装内测版
+<p align="center">
+  <a href="#core-workflow"><img src="docs/readme-hero.svg" width="100%" alt="Prompt Studio：结构化编辑、AI 对照与版本历史工作流"></a>
+</p>
 
-打开 `dist/Prompt Studio.dmg`，将 `Prompt Studio` 拖入“应用程序”。首次启动若被 macOS 拦截，先尝试打开一次，再前往“系统设置 → 隐私与安全性”点击“仍要打开”。
+## ✨ 这是什么
 
-当前安装包仅支持 Apple Silicon，要求 macOS 13 或更高版本。
+Prompt Studio 是一个原生、本地优先的 Prompt 编辑器。它把 Prompt 当作有结构的 Markdown 文档，而不是一段散落在聊天框里的文本：当前工作稿实时写回 `.md`，只有明确选择“保存新版本”时，才创建不可变的 `Vn.md` 历史快照。
 
-## 用 Xcode 开发
+当前仓库是第一阶段原型，重点验证从编辑、AI 辅助到版本回溯的完整闭环。
 
-- Apple Silicon Mac
-- macOS 13 或更高版本（第一阶段临时基线，最终最低版本仍待产品确认）
+<a id="core-workflow"></a>
+
+## 🧭 核心工作流
+
+1. **组织** — 新建或打开本地 Prompt 文件夹，在左侧文件树管理结构化 Markdown 文档。
+2. **比较** — 点击“AI 生成”，在只读 AI 参考稿与可编辑 System Prompt 之间逐段判断和修改。
+3. **沉淀** — 草稿自动保存；确认成果后手动保存为新的不可变版本，随时预览、复制或基于旧版本继续编辑。
+
+## 🧩 当前能力
+
+| 能力 | 现在可以做什么 |
+| --- | --- |
+| 本地工作区 | 新建或打开 Prompt 文件夹；重命名、在 Finder 中显示或移到废纸篓 |
+| 结构化编辑 | 默认生成 12 个维度；支持新增、删除、改名、隐藏与拖动排序 |
+| AI 对照 | 使用 DeepSeek V4 Flash / V4 Pro 生成只读参考稿，与正式稿并排编辑 |
+| 版本历史 | 创建连续的 `Vn.md` 快照，预览完整 Markdown，加入对比或基于旧版迭代 |
+| 自动保存 | System Prompt 实时写回本地 Markdown；SQLite 仅保存版本和对照元数据 |
+| 隐私边界 | API Key、接口地址和模型配置保存在当前 Mac 的应用偏好设置中，不写入 Prompt 或 App 包 |
+
+## 🗂️ 文件与数据
+
+每个 Prompt 都是一个独立文件夹，正文保持可读、可迁移的 Markdown 格式：
+
+```text
+My Prompt/
+├── System Prompt.md              # 当前工作稿，自动保存
+├── V3.md                         # 不可变历史快照
+├── V2.md
+├── V1.md
+└── .prompt-history/
+    └── workspace.db              # 版本与对照元数据
+```
+
+调试时可以通过 `--db <path>` 或环境变量 `PROMPT_ITERATION_DB` 指定隔离数据库。
+
+## 🚀 运行应用
+
+当前仓库暂未提供可下载的 DMG 或 GitHub Release。请在 Apple Silicon Mac 上从源码运行：
+
+- macOS 13 或更高版本
 - Xcode 26.6 或更高版本
 
-双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行。按 `⌘U` 运行 9 项核心测试。
+双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，然后按 `⌘R`。
 
-命令行验证与 Xcode 使用同一个原生工程：
+也可以使用保留的 Swift Package 入口，无需额外依赖：
 
 ```bash
-cd PromptIterationAssistant
+swift run PromptIterationAssistant
+```
+
+使用隔离数据库启动：
+
+```bash
+swift run PromptIterationAssistant --db /tmp/prompt-iteration-demo.db
+```
+
+<a id="develop-and-test"></a>
+
+## 🛠️ 开发与验证
+
+命令行构建与 Xcode 使用同一个原生工程：
+
+```bash
 xcodebuild \
   -project PromptIterationAssistant.xcodeproj \
   -scheme PromptIterationAssistant \
@@ -51,39 +100,36 @@ xcodebuild \
   build
 ```
 
-原有 Swift Package 仍保留作为轻量命令行入口，无需下载额外依赖：
+运行 4 项核心检查和 9 项 XCTest：
 
 ```bash
 swift run PromptIterationCoreChecks
-swift run PromptIterationAssistant
+xcodebuild \
+  -project PromptIterationAssistant.xcodeproj \
+  -scheme PromptIterationAssistant \
+  -destination 'platform=macOS' \
+  test
 ```
 
-使用隔离测试数据库启动：
-
-```bash
-swift run PromptIterationAssistant --db /tmp/prompt-iteration-demo.db
-```
-
-每个 Prompt 都是一个独立文件夹：`System Prompt.md` 是最新工作稿，历史快照按 `V4.md`、`V3.md` 这样的倒序存在同一文件夹。版本元数据位于：
-
-```text
-<Prompt 文件夹>/.prompt-history/workspace.db
-```
-
-也可使用 `PROMPT_ITERATION_DB` 指定位置。
-
-## 第一阶段手工验收
+<details>
+<summary><strong>展开第一阶段手工验收清单</strong></summary>
 
 1. 启动应用，确认先出现“新建 Prompt / 打开文件夹”两个入口。
 2. 新建 Prompt，确认生成 Prompt 文件夹和带 12 个默认标题的 `System Prompt.md`；展开后确认各行显示相同的 Prompt 名称，并由 V4、V3、V2 标签区分版本。
 3. 首页初始确认只有一个 System Prompt 编辑框；填写内容后点击“AI 生成”。
 4. 确认生成完成后左侧出现只读 AI 参考稿，右侧保留可编辑 System Prompt 正式稿；交换左右位置后业务身份不变。
 5. 点击“保存为新版本”，确认按钮显示保存成功，左侧最新稿以最大版本号排在第一项，旧版本继续倒序显示。
-6. 展开左侧 Prompt 文件夹并点击某个 Vn，确认右侧以 Markdown 代码框显示完整 Prompt；在行菜单选择“加入对比”，确认进入左旧版、右当前版的对照编辑。
+6. 点击某个 `Vn`，确认右侧以 Markdown 代码框显示完整 Prompt；在行菜单选择“加入对比”，确认进入左旧版、右当前版的对照编辑。
 7. 在版本行菜单点击“基于此版本编辑”，确认左侧是只读历史版本，右侧是可编辑的待迭代工作稿。
 8. 隐藏一个栏目并复制完整 Prompt，确认该栏目未进入剪贴板。
 9. 打开“设置”，填写 DeepSeek API Key，保存后重启应用，确认配置仍在；点击“测试连接”查看结果。
 
-## 参考来源
+</details>
 
-SQLite 封装、事务写入和不可变版本思路改编自仓库内的 `参考项目/prompt-version-manager`。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## 🙏 参考与声明
+
+SQLite 封装、事务写入和不可变版本思路改编自仓库内的 `prompt-version-manager` 参考实现。第三方许可与说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+<p align="center">
+  Local-first · Markdown-native · Built for deliberate prompt iteration
+</p>
