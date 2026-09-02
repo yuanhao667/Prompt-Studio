@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Sources/PromptIterationAssistant/Assets.xcassets/AppIcon.appiconset/AppIcon-128x128.png" width="96" alt="Prompt Studio app icon">
+  <img src="docs/readme-icon.svg" width="96" alt="Prompt Studio app icon">
 </p>
 
 <h1 align="center">Prompt Studio</h1>
@@ -10,10 +10,11 @@
 </p>
 
 <p align="center">
-  <a href="#develop-and-test"><img alt="Build in Xcode" src="https://img.shields.io/badge/Build_in_Xcode-查看开发指南-38BDF8?style=for-the-badge&amp;labelColor=111827&amp;logo=xcode&amp;logoColor=white"></a>
+  <a href="#run-app"><img alt="Install from source" src="https://img.shields.io/badge/Install-Run_from_Source-38BDF8?style=for-the-badge&amp;labelColor=111827&amp;logo=xcode&amp;logoColor=white"></a>
 </p>
 
 <p align="center">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-FB923C?style=flat-square&amp;labelColor=111827"></a>
   <img alt="Stage Prototype" src="https://img.shields.io/badge/Stage-Prototype-F59E0B?style=flat-square&amp;labelColor=111827">
   <img alt="macOS 13 or later" src="https://img.shields.io/badge/macOS-13%2B-FFFFFF?style=flat-square&amp;labelColor=111827&amp;logo=apple&amp;logoColor=white">
   <img alt="Apple Silicon" src="https://img.shields.io/badge/Architecture-Apple_Silicon-4F8FF7?style=flat-square&amp;labelColor=111827">
@@ -65,6 +66,8 @@ My Prompt/
 
 调试时可以通过 `--db <path>` 或环境变量 `PROMPT_ITERATION_DB` 指定隔离数据库。
 
+<a id="run-app"></a>
+
 ## 🚀 运行应用
 
 当前仓库暂未提供可下载的 DMG 或 GitHub Release。请在 Apple Silicon Mac 上从源码运行：
@@ -86,50 +89,26 @@ swift run PromptIterationAssistant
 swift run PromptIterationAssistant --db /tmp/prompt-iteration-demo.db
 ```
 
-<a id="develop-and-test"></a>
-
-## 🛠️ 开发与验证
-
-命令行构建与 Xcode 使用同一个原生工程：
-
-```bash
-xcodebuild \
-  -project PromptIterationAssistant.xcodeproj \
-  -scheme PromptIterationAssistant \
-  -destination 'platform=macOS' \
-  build
-```
-
-运行 4 项核心检查和 9 项 XCTest：
-
-```bash
-swift run PromptIterationCoreChecks
-xcodebuild \
-  -project PromptIterationAssistant.xcodeproj \
-  -scheme PromptIterationAssistant \
-  -destination 'platform=macOS' \
-  test
-```
-
-<details>
-<summary><strong>展开第一阶段手工验收清单</strong></summary>
-
-1. 启动应用，确认先出现“新建 Prompt / 打开文件夹”两个入口。
-2. 新建 Prompt，确认生成 Prompt 文件夹和带 12 个默认标题的 `System Prompt.md`；展开后确认各行显示相同的 Prompt 名称，并由 V4、V3、V2 标签区分版本。
-3. 首页初始确认只有一个 System Prompt 编辑框；填写内容后点击“AI 生成”。
-4. 确认生成完成后左侧出现只读 AI 参考稿，右侧保留可编辑 System Prompt 正式稿；交换左右位置后业务身份不变。
-5. 点击“保存为新版本”，确认按钮显示保存成功，左侧最新稿以最大版本号排在第一项，旧版本继续倒序显示。
-6. 点击某个 `Vn`，确认右侧以 Markdown 代码框显示完整 Prompt；在行菜单选择“加入对比”，确认进入左旧版、右当前版的对照编辑。
-7. 在版本行菜单点击“基于此版本编辑”，确认左侧是只读历史版本，右侧是可编辑的待迭代工作稿。
-8. 隐藏一个栏目并复制完整 Prompt，确认该栏目未进入剪贴板。
-9. 打开“设置”，填写 DeepSeek API Key，保存后重启应用，确认配置仍在；点击“测试连接”查看结果。
-
-</details>
-
-## 🙏 参考与声明
+## 🙏 参考来源
 
 SQLite 封装、事务写入和不可变版本思路改编自仓库内的 `prompt-version-manager` 参考实现。第三方许可与说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
+## 📄 License
+
+[MIT](LICENSE) — use it, fork it, ship it.
+
+你可以使用、复制、修改、合并、发布、分发、再许可或销售本项目的副本，但需要保留原始版权与许可声明；软件按“原样”提供，不附带任何形式的担保。
+
+---
+
 <p align="center">
-  Local-first · Markdown-native · Built for deliberate prompt iteration
+  <strong>Built with ❤️ by <a href="https://github.com/yuanhao667">@yuanhao667</a></strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/yuanhao667/Prompt-Studio/archive/refs/heads/main.zip">Download Source</a>
+  ·
+  <a href="#run-app">Install</a>
+  ·
+  <a href="https://github.com/yuanhao667/Prompt-Studio/issues">Report Issues</a>
 </p>
