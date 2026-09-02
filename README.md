@@ -26,7 +26,7 @@
   ·
   <a href="#data">文件与数据</a>
   ·
-  <a href="#run-app">安装运行</a>
+  <a href="#run-app">下载安装</a>
   ·
   <a href="#license">开源许可</a>
 </p>
@@ -84,26 +84,25 @@ My Prompt/
 
 <a id="run-app"></a>
 
-## 🚀 运行应用
+## 🚀 下载安装
 
-当前仓库暂未提供可下载的 DMG 或 GitHub Release。请在 Apple Silicon Mac 上从源码运行：
+### [⬇️ 下载 Prompt Studio v0.1.0（Apple Silicon DMG）](https://github.com/yuanhao667/Prompt-Studio/releases/download/v0.1.0/Prompt.Studio.dmg)
 
-- macOS 13 或更高版本
-- Xcode 26.6 或更高版本
+点击上面的链接会直接下载 macOS 安装包。当前版本支持 Apple Silicon，要求 macOS 13 或更高版本。
 
-双击 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，然后按 `⌘R`。
+1. 打开下载好的 `Prompt.Studio.dmg`。
+2. 将 `Prompt Studio` 拖入“应用程序”文件夹。
 
-也可以使用保留的 Swift Package 入口，无需额外依赖：
+### 首次打开
 
-```bash
-swift run PromptIterationAssistant
-```
+当前安装包尚未使用 Apple Developer ID 签名或提交 Apple 公证，因此第一次启动时可能会被 macOS 拦截：
 
-使用隔离数据库启动：
+1. 在“应用程序”中双击 `Prompt Studio`，让系统显示一次安全提醒。
+2. 打开“系统设置 → 隐私与安全性”，向下滚动到“安全性”。
+3. 找到关于 `Prompt Studio` 的提示，点击“仍要打开”。这个按钮会在首次尝试启动后出现。
+4. 在再次弹出的确认窗口中点击“打开”；此后即可正常双击启动。
 
-```bash
-swift run PromptIterationAssistant --db /tmp/prompt-iteration-demo.db
-```
+操作方法可参阅 [Apple 官方说明](https://support.apple.com/zh-cn/guide/mac-help/-mh40616/mac)。版本说明见 [Prompt Studio v0.1.0](https://github.com/yuanhao667/Prompt-Studio/releases/tag/v0.1.0)。
 
 ## 🙏 参考来源
 
@@ -124,9 +123,9 @@ SQLite 封装、事务写入和不可变版本思路改编自仓库内的 `promp
 </p>
 
 <p align="center">
-  <a href="https://github.com/yuanhao667/Prompt-Studio/archive/refs/heads/main.zip">Download Source</a>
+  <a href="https://github.com/yuanhao667/Prompt-Studio/releases/download/v0.1.0/Prompt.Studio.dmg">Download for macOS</a>
   ·
-  <a href="#run-app">Install</a>
+  <a href="https://github.com/yuanhao667/Prompt-Studio/releases/tag/v0.1.0">Release Notes</a>
   ·
   <a href="https://github.com/yuanhao667/Prompt-Studio/issues">Report Issues</a>
 </p>
