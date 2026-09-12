@@ -26,11 +26,36 @@ private struct WorkspaceItem: Identifiable {
   let url: URL
   let kind: WorkspaceItemKind
   let children: [WorkspaceItem]?
+  var ownerDocument: URL? = nil
+  var customName: String? = nil
+
+  var displayName: String { customName ?? (ownerDocument ?? url).deletingPathExtension().lastPathComponent }
+
+  var orderKey: String {
+    if case let .version(number) = kind, let ownerDocument {
+      return ownerDocument.lastPathComponent + "/V\(number).md"
+    }
+    return url.lastPathComponent
+  }
 
   var id: String { url.standardizedFileURL.path }
   var isDirectory: Bool {
     if case .folder = kind { return true }
     return false
+  }
+}
+
+private struct WorkspaceDropTarget: Equatable {
+  let parent: URL
+  let before: String?
+  let rowID: String
+  let edge: Edge?
+}
+
+private struct WorkspaceDropFrames: PreferenceKey {
+  static var defaultValue: [String: CGRect] = [:]
+  static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, new in new })
   }
 }
 
@@ -46,10 +71,18 @@ struct AppRootView: View {
   @State private var pageBeforeSettings: WorkspacePage = .editor
   @State private var showsSidebar = true
   @State private var sidebarWidth: CGFloat = 260
+  @State private var pendingNewFolderParent: URL?
+  @State private var newFolderName = ""
+  @State private var draggedItemID: String?
+  @State private var workspaceDropTarget: WorkspaceDropTarget?
+  @State private var workspaceDropFrames: [String: CGRect] = [:]
+  @State private var workspaceDragLocation: CGPoint?
+  @GestureState private var workspaceGestureActive = false
+  @State private var pendingRenameVersion: (number: Int, documentURL: URL)?
   @State private var pendingRenameURL: URL?
   @State private var renameText = ""
   @State private var pendingDocumentDeletion: URL?
-  @State private var pendingVersionDeletion: (number: Int, promptFolder: URL)?
+  @State private var pendingVersionDeletion: (number: Int, documentURL: URL)?
   @State private var pendingVersionEdit: VersionSummary?
 
   var body: some View {
@@ -72,7 +105,7 @@ struct AppRootView: View {
               ContentView(
                 model: model,
                 page: $workspacePage,
-                onRenamePrompt: renamePromptFolder
+                onRenamePrompt: renameCurrentPrompt
               )
             } else {
               VStack(spacing: 12) {
@@ -104,24 +137,46 @@ struct AppRootView: View {
       Text(launcherError ?? "")
     }
     .alert(
+      "新建子文件夹",
+      isPresented: Binding(
+        get: { pendingNewFolderParent != nil },
+        set: { if !$0 { pendingNewFolderParent = nil } }
+      )
+    ) {
+      TextField("文件夹名称", text: $newFolderName)
+      Button("创建") {
+        if let parent = pendingNewFolderParent { createSubfolder(in: parent) }
+        pendingNewFolderParent = nil
+      }
+      Button("取消", role: .cancel) { pendingNewFolderParent = nil }
+    } message: {
+      Text("在“\(pendingNewFolderParent?.lastPathComponent ?? "")”中新建文件夹。")
+    }
+    .alert(
       pendingRenameURL?.hasDirectoryPath == true ? "重命名文件夹" : "重命名文档",
       isPresented: Binding(
         get: { pendingRenameURL != nil },
-        set: { if !$0 { pendingRenameURL = nil } }
+        set: { if !$0 { pendingRenameURL = nil; pendingRenameVersion = nil } }
       )
     ) {
       TextField(pendingRenameURL?.hasDirectoryPath == true ? "文件夹名称" : "文档名称", text: $renameText)
       Button("重命名") {
         if let pendingRenameURL {
-          if pendingRenameURL.hasDirectoryPath {
+          if let version = pendingRenameVersion {
+            do {
+              try PromptDocumentStorage.renameVersion(version.number, for: version.documentURL, to: renameText)
+              if let folderURL { refreshFiles(in: folderURL) }
+            } catch { launcherError = error.localizedDescription }
+          } else if pendingRenameURL.hasDirectoryPath {
             renameFolder(pendingRenameURL, to: renameText)
           } else {
             renameDocument(pendingRenameURL, to: renameText)
           }
         }
         pendingRenameURL = nil
+        pendingRenameVersion = nil
       }
-      Button("取消", role: .cancel) { pendingRenameURL = nil }
+      Button("取消", role: .cancel) { pendingRenameURL = nil; pendingRenameVersion = nil }
     } message: {
       Text(
         pendingRenameURL?.hasDirectoryPath == true
@@ -178,7 +233,7 @@ struct AppRootView: View {
         if let pendingVersionDeletion {
           deleteHistoryVersion(
             pendingVersionDeletion.number,
-            in: pendingVersionDeletion.promptFolder
+            in: pendingVersionDeletion.documentURL
           )
         }
         pendingVersionDeletion = nil
@@ -322,6 +377,22 @@ struct AppRootView: View {
     .frame(maxWidth: .infinity)
   }
 
+  private struct VisibleWorkspaceRow: Identifiable {
+    let item: WorkspaceItem
+    let depth: Int
+    var endOfFolder: URL? = nil
+    var id: String { endOfFolder.map { "end:" + $0.path } ?? item.id }
+  }
+
+  private func visibleRows(in items: [WorkspaceItem], depth: Int = 0) -> [VisibleWorkspaceRow] {
+    items.flatMap { item in
+      [VisibleWorkspaceRow(item: item, depth: depth)]
+        + (expandedFolderIDs.contains(item.id)
+          ? visibleRows(in: item.children ?? [], depth: depth + 1)
+            + [VisibleWorkspaceRow(item: item, depth: depth + 1, endOfFolder: item.url)] : [])
+    }
+  }
+
   private func folderSidebar(_ folderURL: URL) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(spacing: 8) {
@@ -330,85 +401,308 @@ struct AppRootView: View {
           .font(.headline)
           .lineLimit(1)
         Spacer()
-        Button { createPromptFolder(in: folderURL) } label: {
+        Menu {
+          Button("新建 Prompt", systemImage: "doc.badge.plus") { createPromptFolder(in: folderURL) }
+          Button("新建文件夹", systemImage: "folder.badge.plus") { beginCreatingSubfolder(in: folderURL) }
+        } label: {
           Image(systemName: "plus")
             .frame(width: 28, height: 28)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help("新建 Prompt 文件夹")
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
       }
       .padding(.leading, 12)
       .padding(.trailing, 8)
       .padding(.vertical, 12)
+      .contentShape(Rectangle())
+      .background(workspaceDropTarget?.rowID == "root" ? Color.accentColor.opacity(0.15) : .clear)
+      .background(dropFrame("root"))
       Divider()
 
-      ScrollView {
-        LazyVStack(spacing: 2) {
-          ForEach(workspaceItems) { folder in
-            VStack(spacing: 2) {
-              HStack(spacing: 2) {
-                Button {
-                  if expandedFolderIDs.contains(folder.id) {
-                    expandedFolderIDs.remove(folder.id)
-                  } else {
-                    expandedFolderIDs.insert(folder.id)
+      GeometryReader { geometry in
+        ScrollViewReader { scrollProxy in
+          ScrollView {
+            LazyVStack(spacing: 2) {
+              ForEach(visibleRows(in: workspaceItems)) { row in
+                if row.endOfFolder != nil {
+                  workspaceEndDropRow(id: row.id)
+                    .background(dropFrame(row.id))
+                    .padding(.leading, CGFloat(row.depth) * 18)
+                } else {
+                  Group {
+                    if row.item.isDirectory { workspaceFolderRow(row.item) }
+                    else { workspaceItemRow(row.item) }
                   }
-                } label: {
-                  HStack(spacing: 8) {
-                    Image(
-                      systemName: expandedFolderIDs.contains(folder.id)
-                        ? "chevron.down" : "chevron.right"
-                    )
-                    .font(.caption.bold())
-                    .frame(width: 12)
-                    Image(systemName: "folder")
-                    Text(folder.url.lastPathComponent)
-                      .lineLimit(1)
-                    Spacer()
-                  }
-                  .padding(.leading, 6)
-                  .padding(.vertical, 7)
+                  .frame(height: 38)
                   .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
-
-                Menu {
-                  Button("重命名", systemImage: "pencil") { beginRenaming(folder.url) }
-                  Button("创建新版本", systemImage: "doc.badge.plus") {
-                    saveNewVersion(in: folder.url)
-                  }
-                  Button("在访达中显示", systemImage: "folder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([folder.url])
-                  }
-                  Divider()
-                  Button("删除项目", systemImage: "trash", role: .destructive) {
-                    pendingDocumentDeletion = folder.url
-                  }
-                } label: {
-                  Image(systemName: "ellipsis")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-              }
-
-              if expandedFolderIDs.contains(folder.id) {
-                ForEach(folder.children ?? []) { child in
-                  workspaceItemRow(child)
-                    .padding(.leading, 22)
+                  .background(workspaceDropTarget?.rowID == row.id && workspaceDropTarget?.edge == nil
+                    ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                  .overlay(alignment: .top) { insertionLine(row.id, edge: .top) }
+                  .overlay(alignment: .bottom) { insertionLine(row.id, edge: .bottom) }
+                  .opacity(draggedItemID == row.id ? 0.5 : 1)
+                  .background(dropFrame(row.id))
+                  .highPriorityGesture(workspaceDragGesture(for: row.item))
+                  .padding(.leading, CGFloat(row.depth) * 18)
                 }
               }
+              workspaceEndDropRow(id: "root-end")
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(dropFrame("root-end"))
+            }
+            .padding(8)
+            .frame(minHeight: max(0, geometry.size.height - 16), alignment: .top)
+          }
+          .background(dropFrame("viewport"))
+          .task(id: workspaceGestureActive) {
+            guard workspaceGestureActive else { return }
+            while !Task.isCancelled {
+              try? await Task.sleep(nanoseconds: 180_000_000)
+              guard !Task.isCancelled else { return }
+              scrollWorkspaceDuringDrag(scrollProxy)
             }
           }
         }
-        .padding(8)
       }
     }
     .background(Color(nsColor: .controlBackgroundColor))
+    .coordinateSpace(name: "workspaceSidebar")
+    .onPreferenceChange(WorkspaceDropFrames.self) { frames in
+      workspaceDropFrames = frames
+      if let location = workspaceDragLocation { workspaceDropTarget = target(at: location) }
+    }
+    .onChange(of: workspaceGestureActive) { active in
+      if !active { draggedItemID = nil; workspaceDragLocation = nil; workspaceDropTarget = nil }
+    }
+  }
+
+  private func workspaceFolderRow(_ folder: WorkspaceItem) -> some View {
+    HStack(spacing: 2) {
+      Button {
+        if expandedFolderIDs.contains(folder.id) {
+          expandedFolderIDs.remove(folder.id)
+        } else {
+          expandedFolderIDs.insert(folder.id)
+        }
+      } label: {
+        HStack(spacing: 8) {
+          Image(systemName: expandedFolderIDs.contains(folder.id) ? "chevron.down" : "chevron.right")
+            .font(.caption.bold())
+            .frame(width: 12)
+          Image(systemName: "folder")
+          Text(folder.url.lastPathComponent).lineLimit(1)
+          Spacer(minLength: 0)
+        }
+        .padding(.leading, 6)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .frame(maxWidth: .infinity)
+      Menu {
+        folderMenuActions(folder)
+      } label: {
+        Image(systemName: "ellipsis")
+          .frame(width: 28, height: 28)
+          .contentShape(Rectangle())
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+    }
+    .contentShape(Rectangle())
+    .contextMenu { folderMenuActions(folder) }
+  }
+
+  @ViewBuilder
+  private func folderMenuActions(_ folder: WorkspaceItem) -> some View {
+    Button("新建子文件夹", systemImage: "folder.badge.plus") { beginCreatingSubfolder(in: folder.url) }
+    Button("新建 Prompt", systemImage: "doc.badge.plus") { createPromptFolder(in: folder.url) }
+    Divider()
+    Button("重命名", systemImage: "pencil") { beginRenaming(folder.url) }
+    if folder.children?.contains(where: { if case .document = $0.kind { return true }; return false }) == true {
+      Button("创建新版本", systemImage: "doc.badge.plus") { saveNewVersion(in: folder.url) }
+    }
+    Button("在访达中显示", systemImage: "folder") {
+      NSWorkspace.shared.activateFileViewerSelecting([folder.url])
+    }
+    Divider()
+    Button("删除文件夹", systemImage: "trash", role: .destructive) { pendingDocumentDeletion = folder.url }
+  }
+
+  @ViewBuilder
+  private func insertionLine(_ id: String, edge: Edge) -> some View {
+    if workspaceDropTarget?.rowID == id, workspaceDropTarget?.edge == edge {
+      Rectangle().fill(Color.accentColor).frame(height: 2).allowsHitTesting(false)
+    }
+  }
+
+  private func workspaceEndDropRow(id: String) -> some View {
+    Color.clear
+      .frame(maxWidth: .infinity, minHeight: id == "root-end" ? 44 : 10)
+      .overlay(alignment: .top) {
+        if workspaceDropTarget?.rowID == id {
+          Rectangle().fill(Color.accentColor).frame(height: 2)
+        }
+      }
+      .contentShape(Rectangle())
+      .accessibilityHidden(true)
+  }
+
+  private func dropFrame(_ id: String) -> some View {
+    GeometryReader { geometry in
+      Color.clear.preference(key: WorkspaceDropFrames.self,
+        value: [id: geometry.frame(in: .named("workspaceSidebar"))])
+    }
+  }
+
+  private func workspaceDragGesture(for item: WorkspaceItem) -> some Gesture {
+    DragGesture(minimumDistance: 6, coordinateSpace: .named("workspaceSidebar"))
+      .updating($workspaceGestureActive) { _, active, _ in active = true }
+      .onChanged { value in
+        draggedItemID = item.id
+        workspaceDragLocation = value.location
+        workspaceDropTarget = target(at: value.location)
+      }
+      .onEnded { value in
+        if let target = target(at: value.location) { _ = performWorkspaceDrop(target, sourceID: item.id) }
+        draggedItemID = nil
+        workspaceDragLocation = nil
+        workspaceDropTarget = nil
+      }
+  }
+
+  private func target(at point: CGPoint) -> WorkspaceDropTarget? {
+    guard let root = folderURL else { return nil }
+    if workspaceDropFrames["root"]?.contains(point) == true {
+      return WorkspaceDropTarget(parent: root, before: nil, rowID: "root", edge: nil)
+    }
+    guard workspaceDropFrames["viewport"]?.contains(point) == true else { return nil }
+    for row in visibleRows(in: workspaceItems) {
+      guard let frame = workspaceDropFrames[row.id], frame.insetBy(dx: 0, dy: -1).contains(point) else { continue }
+      if let parent = row.endOfFolder {
+        return WorkspaceDropTarget(parent: parent, before: nil, rowID: row.id, edge: .bottom)
+      }
+      return dropTarget(for: row.item, at: CGPoint(x: point.x - frame.minX, y: point.y - frame.minY))
+    }
+    if let end = workspaceDropFrames["root-end"], point.y >= end.minY {
+      return WorkspaceDropTarget(parent: root, before: nil, rowID: "root-end", edge: .bottom)
+    }
+    return nil
+  }
+
+  private func scrollWorkspaceDuringDrag(_ proxy: ScrollViewProxy) {
+    guard let location = workspaceDragLocation, let viewport = workspaceDropFrames["viewport"],
+      viewport.contains(location) else { return }
+    let rows = visibleRows(in: workspaceItems)
+    let visible = rows.indices.filter { index in
+      guard let frame = workspaceDropFrames[rows[index].id] else { return false }
+      return frame.intersects(viewport)
+    }
+    if location.y > viewport.maxY - 35, let last = visible.last, rows.indices.contains(last + 1) {
+      proxy.scrollTo(rows[last + 1].id, anchor: .bottom)
+    } else if location.y < viewport.minY + 35, let first = visible.first, first > 0 {
+      proxy.scrollTo(rows[first - 1].id, anchor: .top)
+    }
+  }
+
+  private func items(in parent: URL) -> [WorkspaceItem] {
+    if parent.standardizedFileURL == folderURL?.standardizedFileURL { return workspaceItems }
+    func find(_ items: [WorkspaceItem]) -> [WorkspaceItem]? {
+      for item in items where item.isDirectory {
+        if item.url.standardizedFileURL == parent.standardizedFileURL { return item.children ?? [] }
+        if let found = find(item.children ?? []) { return found }
+      }
+      return nil
+    }
+    return find(workspaceItems) ?? []
+  }
+
+  private func parent(of item: WorkspaceItem) -> URL {
+    (item.ownerDocument ?? item.url).deletingLastPathComponent()
+  }
+
+  private func dropTarget(for item: WorkspaceItem, at point: CGPoint) -> WorkspaceDropTarget {
+    if item.isDirectory, point.y >= 10, point.y <= 28 {
+      return WorkspaceDropTarget(parent: item.url, before: nil, rowID: item.id, edge: nil)
+    }
+    let parent = parent(of: item)
+    let siblings = items(in: parent)
+    let before = point.y < (item.isDirectory ? 10 : 19)
+    let index = siblings.firstIndex(where: { $0.id == item.id }) ?? 0
+    let anchor = before ? item.orderKey : (siblings.indices.contains(index + 1) ? siblings[index + 1].orderKey : nil)
+    return WorkspaceDropTarget(parent: parent, before: anchor, rowID: item.id, edge: before ? .top : .bottom)
+  }
+
+  private func performWorkspaceDrop(_ target: WorkspaceDropTarget, sourceID: String) -> Bool {
+    defer { draggedItemID = nil; workspaceDropTarget = nil }
+    let id = sourceID
+    guard let root = folderURL else { return false }
+    func find(_ items: [WorkspaceItem]) -> WorkspaceItem? {
+      for item in items {
+        if item.id == id { return item }
+        if let found = find(item.children ?? []) { return found }
+      }
+      return nil
+    }
+    guard let item = find(workspaceItems) else { return false }
+    let sourceParent = parent(of: item)
+    let sourceKeys = items(in: sourceParent).map(\.orderKey)
+    let targetKeys = items(in: target.parent).map(\.orderKey)
+    do {
+      if sourceParent.standardizedFileURL == target.parent.standardizedFileURL {
+        try WorkspaceItemOrder.save(WorkspaceItemOrder.placing(item.orderKey, before: target.before, in: sourceKeys), in: sourceParent)
+      } else if case .version = item.kind {
+        try moveVersionFile(item, to: target)
+      } else {
+        let destination = try WorkspaceFolderOperations.moveDestination(for: item.url, into: target.parent, root: root)
+        let selected = model?.documentURL.flatMap {
+          WorkspaceFolderOperations.rebasedURL($0, from: item.url, to: destination)
+        }
+        if selected != nil, model?.isGeneratingPrompt == true {
+          throw PromptIterationError.validation("请等待当前 Prompt 生成完成后再移动。")
+        }
+        var attachments: [(source: URL, destination: URL)] = []
+        if !item.isDirectory {
+          let history = PromptDocumentStorage.directory(for: item.url)
+          if FileManager.default.fileExists(atPath: history.path) {
+            attachments.append((history, PromptDocumentStorage.directory(for: destination)))
+          }
+        }
+        // Keep an emptied source folder visible in the workspace.
+        try markPromptFolder(sourceParent)
+        try markPromptFolder(target.parent)
+        try WorkspaceItemOrder.move(source: item.url, destination: destination, before: target.before,
+          sourceKeys: sourceKeys, destinationKeys: targetKeys, attachments: attachments)
+        expandedFolderIDs = Set(expandedFolderIDs.map { path in
+          WorkspaceFolderOperations.rebasedURL(URL(fileURLWithPath: path), from: item.url, to: destination)?.path ?? path
+        })
+        if let selected { model?.relocateDocument(to: selected) }
+      }
+      expandAncestors(of: target.parent)
+      refreshFiles(in: root)
+      return true
+    } catch {
+      launcherError = error.localizedDescription
+      return false
+    }
+  }
+
+  private func moveVersionFile(_ item: WorkspaceItem, to target: WorkspaceDropTarget) throws {
+    guard case let .version(number) = item.kind, let owner = item.ownerDocument else { return }
+    let name = item.customName.map { $0 + ".md" }
+      ?? "\(owner.deletingPathExtension().lastPathComponent) V\(number).md"
+    let destination = target.parent.appendingPathComponent(name)
+    let previous = try PromptDocumentStorage.detachedVersions(for: owner)
+    try PromptDocumentStorage.detachVersion(number, for: owner, to: destination)
+    do {
+      try WorkspaceItemOrder.save(WorkspaceItemOrder.placing(name, before: target.before,
+        in: items(in: target.parent).map(\.orderKey)), in: target.parent)
+    } catch {
+      try? FileManager.default.removeItem(at: destination)
+      try? PromptDocumentStorage.setDetachedVersions(previous, for: owner)
+      throw error
+    }
   }
 
   @ViewBuilder
@@ -420,7 +714,7 @@ struct AppRootView: View {
     } else if case let .version(number) = item.kind {
       HStack(spacing: 4) {
         Button {
-          openHistoryVersion(number, in: item.url.deletingLastPathComponent())
+          openHistoryVersion(number, in: item.ownerDocument ?? item.url)
         } label: {
           HStack(spacing: 8) {
             Text("V\(number)")
@@ -429,7 +723,7 @@ struct AppRootView: View {
               .padding(.vertical, 3)
               .foregroundStyle(.blue)
               .background(Color.blue.opacity(0.14), in: Capsule())
-            Text(item.url.deletingLastPathComponent().lastPathComponent)
+            Text(item.displayName)
               .lineLimit(1)
             Spacer()
           }
@@ -440,7 +734,9 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
-          versionMenuActions(number: number, promptFolder: item.url.deletingLastPathComponent())
+          Button("重命名", systemImage: "pencil") { beginRenamingFile(item) }
+          Divider()
+          versionMenuActions(number: number, documentURL: item.ownerDocument ?? item.url)
         } label: {
           Image(systemName: "ellipsis")
             .frame(width: 28, height: 28)
@@ -453,12 +749,17 @@ struct AppRootView: View {
       .padding(.leading, 2)
       .background(
         workspacePage == .history
-          && model?.documentURL?.deletingLastPathComponent().standardizedFileURL
-            == item.url.deletingLastPathComponent().standardizedFileURL
+          && model?.documentURL?.standardizedFileURL
+            == item.ownerDocument?.standardizedFileURL
           && model?.selectedHistoryVersion?.number == number
           ? Color.blue.opacity(0.12) : Color.clear,
         in: RoundedRectangle(cornerRadius: 7)
       )
+      .contextMenu {
+        Button("重命名", systemImage: "pencil") { beginRenamingFile(item) }
+        Divider()
+        versionMenuActions(number: number, documentURL: item.ownerDocument ?? item.url)
+      }
     } else if case let .document(number) = item.kind {
       HStack(spacing: 4) {
         Button {
@@ -472,7 +773,7 @@ struct AppRootView: View {
               .padding(.vertical, 3)
               .foregroundStyle(.blue)
               .background(Color.blue.opacity(0.14), in: Capsule())
-            Text(item.url.deletingLastPathComponent().lastPathComponent)
+            Text(item.displayName)
               .lineLimit(1)
             Spacer()
           }
@@ -483,7 +784,9 @@ struct AppRootView: View {
         .buttonStyle(.plain)
 
         Menu {
-          versionMenuActions(number: number, promptFolder: item.url.deletingLastPathComponent())
+          Button("重命名", systemImage: "pencil") { beginRenamingFile(item) }
+          Divider()
+          versionMenuActions(number: number, documentURL: item.ownerDocument ?? item.url)
         } label: {
           Image(systemName: "ellipsis")
             .frame(width: 28, height: 28)
@@ -515,27 +818,27 @@ struct AppRootView: View {
   }
 
   @ViewBuilder
-  private func versionMenuActions(number: Int, promptFolder: URL) -> some View {
+  private func versionMenuActions(number: Int, documentURL: URL) -> some View {
     Button("保存新版本", systemImage: "doc.badge.plus") {
-      saveNewVersion(in: promptFolder)
+      saveNewVersion(for: documentURL)
     }
     Button("加入对比", systemImage: "rectangle.split.2x1") {
-      compareHistoryVersion(number, in: promptFolder)
+      compareHistoryVersion(number, in: documentURL)
     }
     Button("基于此版本编辑", systemImage: "square.and.pencil") {
-      editHistoryVersion(number, in: promptFolder)
+      editHistoryVersion(number, in: documentURL)
     }
     Button("复制版本", systemImage: "doc.on.doc") {
-      copyHistoryVersion(number, in: promptFolder)
+      copyHistoryVersion(number, in: documentURL)
     }
     Divider()
     Button("在 Finder 中显示", systemImage: "folder") {
-      let versionURL = promptFolder.appendingPathComponent("V\(number).md")
+      let versionURL = PromptDocumentStorage.versionURL(number, for: documentURL)
       NSWorkspace.shared.activateFileViewerSelecting([versionURL])
     }
     Divider()
     Button("删除版本", systemImage: "trash", role: .destructive) {
-      pendingVersionDeletion = (number, promptFolder)
+      pendingVersionDeletion = (number, documentURL)
     }
   }
 
@@ -577,10 +880,27 @@ struct AppRootView: View {
     let workspaceRoot = (try? isPromptFolder(promptFolder)) == true
       ? promptFolder.deletingLastPathComponent() : promptFolder
     if let number = versionNumber(from: url) {
+      let owner = try? workingDocument(in: promptFolder)
       openWorkspace(workspaceRoot)
-      openHistoryVersion(number, in: promptFolder)
+      if let owner { openHistoryVersion(number, in: owner) }
     } else {
       openWorkspace(workspaceRoot, selecting: url)
+    }
+  }
+
+  private func beginCreatingSubfolder(in parent: URL) {
+    newFolderName = "新建文件夹"
+    pendingNewFolderParent = parent
+  }
+
+  private func createSubfolder(in parent: URL) {
+    do {
+      let destination = try WorkspaceFolderOperations.createFolder(named: newFolderName, in: parent)
+      try markPromptFolder(destination)
+      expandAncestors(of: destination)
+      if let folderURL { refreshFiles(in: folderURL) }
+    } catch {
+      launcherError = error.localizedDescription
     }
   }
 
@@ -597,16 +917,16 @@ struct AppRootView: View {
       try markPromptFolder(url)
       let promptURL = uniquePromptURL(in: url)
       try writeDefaultPrompt(to: promptURL)
-      refreshFiles(in: folderURL)
+      if let root = self.folderURL { refreshFiles(in: root) }
       openDocument(promptURL)
     } catch {
       launcherError = error.localizedDescription
     }
   }
 
-  private func renamePromptFolder(to enteredName: String) {
+  private func renameCurrentPrompt(to enteredName: String) {
     guard let documentURL = model?.documentURL else { return }
-    renameFolder(documentURL.deletingLastPathComponent(), to: enteredName)
+    renameDocument(documentURL, to: enteredName)
   }
 
   private func renameFolder(_ source: URL, to enteredName: String) {
@@ -623,42 +943,55 @@ struct AppRootView: View {
       return
     }
 
+    _ = relocateFolder(source, to: destination)
+  }
+
+  @discardableResult
+  private func relocateFolder(_ source: URL, to destination: URL) -> Bool {
     let selectedDocument = model?.documentURL
-    let isSelectedFolder = selectedDocument?.deletingLastPathComponent().standardizedFileURL
-      == source.standardizedFileURL
-    if isSelectedFolder { model = nil }
+    let relocatedDocument = selectedDocument.flatMap {
+      WorkspaceFolderOperations.rebasedURL($0, from: source, to: destination)
+    }
+    if relocatedDocument != nil, model?.isGeneratingPrompt == true {
+      launcherError = "请等待当前 Prompt 生成完成后再移动或重命名文件夹。"
+      return false
+    }
     do {
-      try FileManager.default.moveItem(at: source, to: destination)
-      expandedFolderIDs.remove(source.standardizedFileURL.path)
-      expandedFolderIDs.insert(destination.standardizedFileURL.path)
-      if let folderURL { refreshFiles(in: folderURL) }
-      if isSelectedFolder, let selectedDocument {
-        openDocument(destination.appendingPathComponent(selectedDocument.lastPathComponent))
+      // Moving the directory also carries its hidden .prompt-history databases and snapshots.
+      let parent = source.deletingLastPathComponent()
+      let keys = items(in: parent).map(\.orderKey)
+      let next = keys.firstIndex(of: source.lastPathComponent).flatMap { keys.indices.contains($0 + 1) ? keys[$0 + 1] : nil }
+      try WorkspaceItemOrder.move(source: source, destination: destination, before: next,
+        sourceKeys: keys, destinationKeys: keys)
+      expandedFolderIDs = Set(expandedFolderIDs.map { path in
+        WorkspaceFolderOperations.rebasedURL(URL(fileURLWithPath: path), from: source, to: destination)?.path ?? path
+      })
+      if let root = folderURL,
+        let relocatedRoot = WorkspaceFolderOperations.rebasedURL(root, from: source, to: destination) {
+        folderURL = relocatedRoot
       }
+      expandAncestors(of: destination)
+      if let relocatedDocument {
+        model?.relocateDocument(to: relocatedDocument)
+      }
+      if let folderURL { refreshFiles(in: folderURL) }
+      return true
     } catch {
       launcherError = error.localizedDescription
-      if isSelectedFolder, let selectedDocument,
-        FileManager.default.fileExists(atPath: selectedDocument.path)
-      {
-        openDocument(selectedDocument)
-      }
+      return false
+    }
+  }
+
+  private func expandAncestors(of url: URL) {
+    guard let root = folderURL?.standardizedFileURL else { return }
+    var current = url.standardizedFileURL
+    while current.path != root.path, current.path.hasPrefix(root.path == "/" ? "/" : root.path + "/") {
+      expandedFolderIDs.insert(current.path)
+      current.deleteLastPathComponent()
     }
   }
 
   private func openWorkspace(_ url: URL, selecting selected: URL? = nil) {
-    if selected == nil, (try? isPromptFolder(url)) == true,
-      let files = try? FileManager.default.contentsOfDirectory(
-        at: url,
-        includingPropertiesForKeys: nil,
-        options: [.skipsHiddenFiles]
-      ),
-      let promptURL = files.first(where: {
-        versionNumber(from: $0) == nil && isPromptDocument($0)
-      })
-    {
-      openWorkspace(url.deletingLastPathComponent(), selecting: promptURL)
-      return
-    }
     folderURL = url
     refreshFiles(in: url)
     if let selected {
@@ -671,44 +1004,29 @@ struct AppRootView: View {
   }
 
   private func openDocument(_ url: URL) {
-    expandedFolderIDs.insert(url.deletingLastPathComponent().standardizedFileURL.path)
+    expandAncestors(of: url.deletingLastPathComponent())
     model = AppModel(documentURL: url)
     if let folderURL { refreshFiles(in: folderURL) }
   }
 
-  private func openHistoryVersion(_ number: Int, in promptFolder: URL) {
-    do {
-      let promptURL = try FileManager.default.contentsOfDirectory(
-        at: promptFolder,
-        includingPropertiesForKeys: nil,
-        options: [.skipsHiddenFiles]
-      ).first { versionNumber(from: $0) == nil && isPromptDocument($0) }
-      guard let promptURL else {
-        launcherError = "这个 Prompt 文件夹里没有可编辑的工作稿"
-        return
-      }
-      if model?.documentURL?.standardizedFileURL != promptURL.standardizedFileURL {
-        openDocument(promptURL)
-      }
-      guard let version = model?.versions.first(where: { $0.number == number }) else {
-        launcherError = "找不到历史版本 V\(number)"
-        return
-      }
-      if model?.showsComparison == true { model?.clearComparison() }
-      model?.selectHistory(version)
-      workspacePage = .history
-    } catch {
-      launcherError = error.localizedDescription
+  private func openHistoryVersion(_ number: Int, in promptURL: URL) {
+    if model?.documentURL?.standardizedFileURL != promptURL.standardizedFileURL { openDocument(promptURL) }
+    guard let version = model?.versions.first(where: { $0.number == number }) else {
+      launcherError = "找不到历史版本 V\(number)"
+      return
     }
+    if model?.showsComparison == true { model?.clearComparison() }
+    model?.selectHistory(version)
+    workspacePage = .history
   }
 
-  private func copyHistoryVersion(_ number: Int, in promptFolder: URL) {
-    openHistoryVersion(number, in: promptFolder)
+  private func copyHistoryVersion(_ number: Int, in promptDocument: URL) {
+    openHistoryVersion(number, in: promptDocument)
     model?.copySelectedHistory()
   }
 
-  private func editHistoryVersion(_ number: Int, in promptFolder: URL) {
-    openHistoryVersion(number, in: promptFolder)
+  private func editHistoryVersion(_ number: Int, in promptDocument: URL) {
+    openHistoryVersion(number, in: promptDocument)
     guard let version = model?.selectedHistoryVersion else { return }
     if model?.hasUnversionedChanges == true {
       pendingVersionEdit = version
@@ -717,8 +1035,8 @@ struct AppRootView: View {
     }
   }
 
-  private func compareHistoryVersion(_ number: Int, in promptFolder: URL) {
-    openHistoryVersion(number, in: promptFolder)
+  private func compareHistoryVersion(_ number: Int, in promptDocument: URL) {
+    openHistoryVersion(number, in: promptDocument)
     guard let version = model?.selectedHistoryVersion else { return }
     model?.loadHistory(version)
     workspacePage = .editor
@@ -746,21 +1064,11 @@ struct AppRootView: View {
     }
   }
 
-  private func deleteHistoryVersion(_ number: Int, in promptFolder: URL) {
-    do {
-      guard let documentURL = try workingDocument(in: promptFolder) else {
-        launcherError = "这个项目中没有可编辑的 Prompt 文件"
-        return
-      }
-      if model?.documentURL?.standardizedFileURL != documentURL.standardizedFileURL {
-        openDocument(documentURL)
-      }
-      if model?.deleteVersion(number) == true {
-        if workspacePage == .history { workspacePage = .editor }
-        if let folderURL { refreshFiles(in: folderURL) }
-      }
-    } catch {
-      launcherError = error.localizedDescription
+  private func deleteHistoryVersion(_ number: Int, in documentURL: URL) {
+    if model?.documentURL?.standardizedFileURL != documentURL.standardizedFileURL { openDocument(documentURL) }
+    if model?.deleteVersion(number) == true {
+      if workspacePage == .history { workspacePage = .editor }
+      if let folderURL { refreshFiles(in: folderURL) }
     }
   }
 
@@ -773,24 +1081,31 @@ struct AppRootView: View {
   }
 
   private func beginRenaming(_ url: URL) {
+    pendingRenameVersion = nil
     renameText = url.hasDirectoryPath ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
     pendingRenameURL = url
   }
 
+  private func beginRenamingFile(_ item: WorkspaceItem) {
+    beginRenaming(item.url)
+    if case let .version(number) = item.kind, let document = item.ownerDocument {
+      pendingRenameVersion = (number, document)
+      renameText = item.displayName
+    }
+  }
+
   private func renameDocument(_ url: URL, to enteredName: String) {
-    let trimmed = enteredName.trimmingCharacters(in: .whitespacesAndNewlines)
-    let name = trimmed.lowercased().hasSuffix(".md")
-      ? String(trimmed.dropLast(3)) : trimmed
-    guard !name.isEmpty,
-      name != ".",
-      name != "..",
-      !name.contains("/")
-    else {
-      launcherError = "请输入有效的文档名称"
+    let destination: URL
+    do {
+      let filename = try PromptDocumentStorage.markdownFilename(from: enteredName)
+      destination = url.deletingLastPathComponent().appendingPathComponent(filename)
+      guard PromptDocumentStorage.versionNumber(destination) == nil else {
+        throw PromptIterationError.validation("V 加数字是历史版本的保留名称，请使用其他文档名称。")
+      }
+    } catch {
+      launcherError = error.localizedDescription
       return
     }
-
-    let destination = url.deletingLastPathComponent().appendingPathComponent("\(name).md")
     guard destination.standardizedFileURL != url.standardizedFileURL else { return }
     guard !FileManager.default.fileExists(atPath: destination.path) else {
       launcherError = "同名文档已经存在"
@@ -798,22 +1113,22 @@ struct AppRootView: View {
     }
 
     let wasSelected = model?.documentURL?.standardizedFileURL == url.standardizedFileURL
-    if wasSelected { model = nil }
-    do {
-      try FileManager.default.moveItem(at: url, to: destination)
-      do {
-        try moveHistoryDatabase(from: url, to: destination)
-      } catch {
-        try? FileManager.default.moveItem(at: destination, to: url)
-        throw error
-      }
-      if let folderURL { refreshFiles(in: folderURL) }
-      if wasSelected { openDocument(destination) }
-    } catch {
-      launcherError = error.localizedDescription
-      if let folderURL { refreshFiles(in: folderURL) }
-      if wasSelected, FileManager.default.fileExists(atPath: url.path) { openDocument(url) }
+    if wasSelected, model?.isGeneratingPrompt == true {
+      launcherError = "请等待当前 Prompt 生成完成后再重命名。"
+      return
     }
+    do {
+      let parent = url.deletingLastPathComponent()
+      let keys = items(in: parent).map(\.orderKey)
+      let next = keys.firstIndex(of: url.lastPathComponent).flatMap { keys.indices.contains($0 + 1) ? keys[$0 + 1] : nil }
+      let history = PromptDocumentStorage.directory(for: url)
+      let attachments: [(source: URL, destination: URL)] = FileManager.default.fileExists(atPath: history.path)
+        ? [(history, PromptDocumentStorage.directory(for: destination))] : []
+      try WorkspaceItemOrder.move(source: url, destination: destination, before: next,
+        sourceKeys: keys, destinationKeys: keys, attachments: attachments)
+      if wasSelected { model?.relocateDocument(to: destination) }
+      if let folderURL { refreshFiles(in: folderURL) }
+    } catch { launcherError = error.localizedDescription }
   }
 
   private func trashItem(_ url: URL) {
@@ -834,17 +1149,6 @@ struct AppRootView: View {
     }
   }
 
-  private func moveHistoryDatabase(from sourceDocument: URL, to destinationDocument: URL) throws {
-    let source = AppModel.databaseURL(for: sourceDocument)
-    let destination = AppModel.databaseURL(for: destinationDocument)
-    guard source != destination, FileManager.default.fileExists(atPath: source.path) else { return }
-    try FileManager.default.createDirectory(
-      at: destination.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    try FileManager.default.moveItem(at: source, to: destination)
-  }
-
   private func refreshFiles(in folderURL: URL) {
     do {
       workspaceItems = try loadWorkspaceItems(in: folderURL, isRoot: true)
@@ -856,51 +1160,31 @@ struct AppRootView: View {
     }
   }
 
-  private func loadWorkspaceItems(in folderURL: URL, isRoot: Bool) throws -> [WorkspaceItem] {
-    try FileManager.default.contentsOfDirectory(
-      at: folderURL,
-      includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-      options: [.skipsHiddenFiles, .skipsPackageDescendants]
-    )
-    .compactMap { url in
+  private func loadWorkspaceItems(in folder: URL, isRoot: Bool) throws -> [WorkspaceItem] {
+    try PromptDocumentStorage.migrateLegacyFolder(folder)
+    let urls = try FileManager.default.contentsOfDirectory(at: folder,
+      includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles, .skipsPackageDescendants])
+    var result: [WorkspaceItem] = []
+    for url in urls {
       let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-      if values.isDirectory == true, values.isSymbolicLink != true {
-        guard try isPromptFolder(url) else { return nil }
-        let children = try loadWorkspaceItems(in: url, isRoot: false)
-        let latestVersion = children.compactMap { child in
-          if case let .version(number) = child.kind { return number }
-          return nil
-        }.max() ?? 1
-        var includedWorkingDocument = false
-        return WorkspaceItem(
-          url: url,
-          kind: .folder,
-          children: children.compactMap { child in
-            switch child.kind {
-            case .document:
-              guard !includedWorkingDocument else { return nil }
-              includedWorkingDocument = true
-              return WorkspaceItem(
-                url: child.url,
-                kind: .document(latestVersion),
-                children: nil
-              )
-            case let .version(number) where number == latestVersion:
-              return nil
-            default:
-              return child
-            }
-          }
-        )
+      guard values.isSymbolicLink != true else { continue }
+      if values.isDirectory == true {
+        guard try isPromptFolder(url) else { continue }
+        result.append(WorkspaceItem(url: url, kind: .folder, children: try loadWorkspaceItems(in: url, isRoot: false)))
+      } else if isPromptDocument(url) {
+        let snapshots = try PromptDocumentStorage.snapshots(for: url)
+        let latest = snapshots.map(\.number).max() ?? 1
+        result.append(WorkspaceItem(url: url, kind: .document(latest), children: nil))
+        let detached = try PromptDocumentStorage.detachedVersions(for: url)
+        let names = try PromptDocumentStorage.snapshotNames(for: url)
+        for snapshot in snapshots where snapshot.number != latest && !detached.contains(snapshot.number) {
+          let customName = names[String(snapshot.number)].map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
+          result.append(WorkspaceItem(url: snapshot.url, kind: .version(snapshot.number), children: nil,
+            ownerDocument: url, customName: customName))
+        }
       }
-      guard !isRoot, isPromptDocument(url) else { return nil }
-      return WorkspaceItem(
-        url: url,
-        kind: versionNumber(from: url).map(WorkspaceItemKind.version) ?? .document(0),
-        children: nil
-      )
     }
-    .sorted {
+    result.sort {
       if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
       switch ($0.kind, $1.kind) {
       case (.document, .version): return true
@@ -908,9 +1192,11 @@ struct AppRootView: View {
       case let (.version(lhs), .version(rhs)): return lhs > rhs
       default: break
       }
-      return $0.url.lastPathComponent.localizedCaseInsensitiveCompare($1.url.lastPathComponent)
-        == .orderedAscending
+      return $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending
     }
+    let keys = try WorkspaceItemOrder.sortedKeys(result.map(\.orderKey), in: folder)
+    let positions = Dictionary(uniqueKeysWithValues: keys.enumerated().map { ($1, $0) })
+    return result.sorted { positions[$0.orderKey, default: 0] < positions[$1.orderKey, default: 0] }
   }
 
   private func flattenedMarkdownFiles(in items: [WorkspaceItem]) -> [URL] {
@@ -987,8 +1273,8 @@ final class AppModel: ObservableObject {
   @Published var deepSeekConnectionMessage = "尚未配置"
   @Published var isGeneratingPrompt = false
 
-  let databaseURL: URL
-  let documentURL: URL?
+  private(set) var databaseURL: URL
+  private(set) var documentURL: URL?
   private var repository: WorkspaceRepository?
   private var testedDeepSeekSettings: [String]?
 
@@ -996,6 +1282,7 @@ final class AppModel: ObservableObject {
     self.documentURL = documentURL?.standardizedFileURL
     databaseURL = Self.databaseURL(for: self.documentURL)
     do {
+      if let documentURL { try PromptDocumentStorage.migrateLegacyFolder(documentURL.deletingLastPathComponent()) }
       try Self.migrateLegacyDatabaseIfNeeded(
         documentURL: self.documentURL,
         destination: databaseURL
@@ -1005,7 +1292,7 @@ final class AppModel: ObservableObject {
       var workspace = try repository.loadOrCreateWorkspace()
       if let documentURL = self.documentURL {
         let markdown = try String(contentsOf: documentURL, encoding: .utf8)
-        workspace.name = documentURL.deletingLastPathComponent().lastPathComponent
+        workspace.name = documentURL.deletingPathExtension().lastPathComponent
         workspace.sections = Self.preserveSectionIDs(
           parsed: PromptMarkdown.parse(markdown),
           existing: workspace.sections
@@ -1050,6 +1337,18 @@ final class AppModel: ObservableObject {
     deepSeekAPIKey = UserDefaults.standard.string(forKey: "deepseek.apiKey") ?? ""
     if !deepSeekAPIKey.isEmpty {
       deepSeekConnectionMessage = "已读取本地配置，尚未测试"
+    }
+  }
+
+  func relocateDocument(to url: URL) {
+    documentURL = url.standardizedFileURL
+    databaseURL = Self.databaseURL(for: documentURL)
+    do {
+      repository = try WorkspaceRepository(databaseURL: databaseURL)
+      workspace?.name = url.deletingPathExtension().lastPathComponent
+    } catch {
+      repository = nil
+      errorMessage = error.localizedDescription
     }
   }
 
@@ -1678,7 +1977,7 @@ final class AppModel: ObservableObject {
   }
 
   private static func versionFileURL(number: Int, beside documentURL: URL) -> URL {
-    documentURL.deletingLastPathComponent().appendingPathComponent("V\(number).md")
+    PromptDocumentStorage.versionURL(number, for: documentURL)
   }
 
   private static func writeVersionSnapshot(
@@ -1688,8 +1987,15 @@ final class AppModel: ObservableObject {
     overwrite: Bool
   ) throws {
     let url = versionFileURL(number: number, beside: documentURL)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     if !overwrite, FileManager.default.fileExists(atPath: url.path) { return }
     try PromptMarkdown.renderAll(sections).write(to: url, atomically: true, encoding: .utf8)
+    if overwrite {
+      let detached = try PromptDocumentStorage.detachedVersions(for: documentURL)
+      if detached.contains(number) {
+        try PromptDocumentStorage.setDetachedVersions(detached.subtracting([number]), for: documentURL)
+      }
+    }
   }
 
   static func databaseURL(for documentURL: URL?) -> URL {
@@ -1703,9 +2009,7 @@ final class AppModel: ObservableObject {
       return URL(fileURLWithPath: NSString(string: custom).expandingTildeInPath)
     }
     if let documentURL {
-      return documentURL.deletingLastPathComponent()
-        .appendingPathComponent(".prompt-history", isDirectory: true)
-        .appendingPathComponent("workspace.db")
+      return PromptDocumentStorage.databaseURL(for: documentURL)
     }
     return WorkspaceRepository.defaultDatabaseURL()
   }

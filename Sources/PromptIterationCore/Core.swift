@@ -1,5 +1,278 @@
 import Foundation
 import SQLite3
+import CryptoKit
+
+public enum WorkspaceFolderOperations {
+  public static func createFolder(named enteredName: String, in parent: URL) throws -> URL {
+    let name = enteredName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.contains(":"),
+      !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+    else { throw PromptIterationError.validation("请输入有效的文件夹名称，不能以点开头或包含路径分隔符。") }
+    let destination = parent.appendingPathComponent(name, isDirectory: true)
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      throw PromptIterationError.validation("同名文件或文件夹已经存在。")
+    }
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+    return destination
+  }
+
+  public static func moveDestination(for source: URL, into parent: URL, root: URL) throws -> URL {
+    let sourcePath = source.resolvingSymlinksInPath().standardizedFileURL.path
+    let parentPath = parent.resolvingSymlinksInPath().standardizedFileURL.path
+    let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
+    func isDescendant(_ path: String, of ancestor: String) -> Bool {
+      path != ancestor && path.hasPrefix(ancestor == "/" ? "/" : ancestor + "/")
+    }
+    guard isDescendant(sourcePath, of: rootPath),
+      parentPath == rootPath || isDescendant(parentPath, of: rootPath)
+    else { throw PromptIterationError.validation("只能在当前工作区内移动文件或文件夹。") }
+    guard sourcePath != parentPath, !isDescendant(parentPath, of: sourcePath) else {
+      throw PromptIterationError.validation("不能将文件夹移入自身或它的子文件夹。")
+    }
+    for url in [source, parent] {
+      let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+      guard (url == source || values.isDirectory == true), values.isSymbolicLink != true else {
+        throw PromptIterationError.validation("请选择有效的文件或文件夹。")
+      }
+    }
+    let destination = parent.appendingPathComponent(source.lastPathComponent, isDirectory: source.hasDirectoryPath)
+    if destination.resolvingSymlinksInPath().standardizedFileURL.path == sourcePath { return source }
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      throw PromptIterationError.validation("目标位置已有同名文件或文件夹，请先重命名。")
+    }
+    return destination
+  }
+
+  public static func rebasedURL(_ url: URL, from source: URL, to destination: URL) -> URL? {
+    let path = url.standardizedFileURL.path
+    let sourcePath = source.standardizedFileURL.path
+    if path == sourcePath { return destination.standardizedFileURL }
+    guard path.hasPrefix(sourcePath + "/") else { return nil }
+    return destination.appendingPathComponent(String(path.dropFirst(sourcePath.count + 1)))
+      .standardizedFileURL
+  }
+}
+
+/// Sibling order belongs to its directory, so moving a subtree preserves all orders inside it.
+public enum WorkspaceItemOrder {
+  public static func metadataURL(in parent: URL) -> URL {
+    parent.appendingPathComponent(".prompt-order.json")
+  }
+
+  public static func sortedKeys(_ keys: [String], in parent: URL) throws -> [String] {
+    let url = metadataURL(in: parent)
+    guard FileManager.default.fileExists(atPath: url.path) else { return keys }
+    let saved = try JSONDecoder().decode([String].self, from: Data(contentsOf: url))
+    var seen = Set<String>()
+    let available = Set(keys)
+    return (saved + keys).filter { available.contains($0) && seen.insert($0).inserted }
+  }
+
+  public static func placing(_ key: String, before anchor: String?, in keys: [String]) -> [String] {
+    if anchor == key { return keys }
+    var result = keys.filter { $0 != key }
+    result.insert(key, at: anchor.flatMap { result.firstIndex(of: $0) } ?? result.count)
+    return result
+  }
+
+  public static func save(_ keys: [String], in parent: URL) throws {
+    try JSONEncoder().encode(keys).write(to: metadataURL(in: parent), options: .atomic)
+  }
+
+  /// Move the item and its private history as a unit; restore files and order on a write failure.
+  public static func move(
+    source: URL, destination: URL, before anchor: String?,
+    sourceKeys: [String], destinationKeys: [String],
+    attachments: [(source: URL, destination: URL)] = []
+  ) throws {
+    let oldParent = source.deletingLastPathComponent()
+    let newParent = destination.deletingLastPathComponent()
+    let sameParent = oldParent.standardizedFileURL == newParent.standardizedFileURL
+    if source.standardizedFileURL == destination.standardizedFileURL, anchor == source.lastPathComponent { return }
+    let parents = sameParent ? [oldParent] : [oldParent, newParent]
+    let backups = try parents.map { parent -> (URL, Data?) in
+      let url = metadataURL(in: parent)
+      return (url, FileManager.default.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil)
+    }
+    let moves = source.standardizedFileURL == destination.standardizedFileURL
+      ? [] : [(source: source, destination: destination)] + attachments
+    for move in moves {
+      guard !FileManager.default.fileExists(atPath: move.destination.path) else {
+        throw PromptIterationError.validation("目标位置已有同名文件或历史数据，请先重命名。")
+      }
+    }
+    var completed: [(source: URL, destination: URL)] = []
+    do {
+      for move in moves {
+        try FileManager.default.createDirectory(at: move.destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: move.source, to: move.destination)
+        completed.append(move)
+      }
+      if !sameParent { try save(sourceKeys.filter { $0 != source.lastPathComponent }, in: oldParent) }
+      func renamedKey(_ key: String) -> String {
+        if key == source.lastPathComponent { return destination.lastPathComponent }
+        if key.hasPrefix(source.lastPathComponent + "/") {
+          return destination.lastPathComponent + key.dropFirst(source.lastPathComponent.count)
+        }
+        return key
+      }
+      let keys = sameParent ? destinationKeys.map(renamedKey) : destinationKeys
+      let newAnchor = sameParent ? anchor.map(renamedKey) : anchor
+      try save(placing(destination.lastPathComponent, before: newAnchor, in: keys), in: newParent)
+    } catch {
+      for move in completed.reversed() { try? FileManager.default.moveItem(at: move.destination, to: move.source) }
+      for (url, data) in backups {
+        if let data { try? data.write(to: url, options: .atomic) }
+        else { try? FileManager.default.removeItem(at: url) }
+      }
+      throw error
+    }
+  }
+}
+
+/// Per-document storage allows multiple working prompts in a directory without sharing versions.
+public enum PromptDocumentStorage {
+  public static func directory(for document: URL) -> URL {
+    let key = SHA256.hash(data: Data(document.lastPathComponent.utf8)).map { String(format: "%02x", $0) }.joined()
+    return document.deletingLastPathComponent().appendingPathComponent(".prompt-history", isDirectory: true)
+      .appendingPathComponent(key, isDirectory: true)
+  }
+
+  public static func databaseURL(for document: URL) -> URL {
+    directory(for: document).appendingPathComponent("workspace.db")
+  }
+
+  public static func versionURL(_ number: Int, for document: URL) -> URL {
+    let name = (try? snapshotNames(for: document)[String(number)]) ?? "V\(number).md"
+    return directory(for: document).appendingPathComponent(name)
+  }
+
+  public static func markdownFilename(from enteredName: String) throws -> String {
+    let trimmed = enteredName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let name = trimmed.lowercased().hasSuffix(".md") ? String(trimmed.dropLast(3)) : trimmed
+    guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.contains(":"),
+      !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+      throw PromptIterationError.validation("请输入有效的文件名称，不能以点开头或包含路径分隔符。")
+    }
+    return name + ".md"
+  }
+
+  public static func snapshotNames(for document: URL) throws -> [String: String] {
+    let url = directory(for: document).appendingPathComponent("version-names.json")
+    guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+    let names = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
+    for (number, filename) in names {
+      guard Int(number).map({ $0 > 0 }) == true, try markdownFilename(from: filename) == filename else {
+        throw PromptIterationError.validation("历史版本名称记录无效。")
+      }
+    }
+    return names
+  }
+
+  public static func snapshots(for document: URL) throws -> [(number: Int, url: URL)] {
+    let folder = directory(for: document)
+    guard FileManager.default.fileExists(atPath: folder.path) else { return [] }
+    let names = try snapshotNames(for: document)
+    let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+    return files.compactMap { url in
+      let number = names.first(where: { $0.value == url.lastPathComponent }).flatMap { Int($0.key) }
+        ?? versionNumber(url)
+      guard let number else { return nil }
+      return (number, url)
+    }
+  }
+
+  public static func renameVersion(_ number: Int, for document: URL, to enteredName: String) throws {
+    let filename = try markdownFilename(from: enteredName)
+    let source = versionURL(number, for: document)
+    let destination = directory(for: document).appendingPathComponent(filename)
+    guard source != destination else { return }
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      throw PromptIterationError.validation("同名历史版本文件已经存在。")
+    }
+    if let reserved = versionNumber(destination), reserved != number {
+      throw PromptIterationError.validation("不能使用其他版本的编号作为文件名。")
+    }
+    var names = try snapshotNames(for: document)
+    guard !names.contains(where: { $0.key != String(number) && $0.value == filename }) else {
+      throw PromptIterationError.validation("同名历史版本文件已经存在。")
+    }
+    names[String(number)] = filename
+    try FileManager.default.moveItem(at: source, to: destination)
+    do {
+      try JSONEncoder().encode(names).write(to: directory(for: document).appendingPathComponent("version-names.json"), options: .atomic)
+    } catch {
+      try? FileManager.default.moveItem(at: destination, to: source)
+      throw error
+    }
+  }
+
+  public static func detachedVersions(for document: URL) throws -> Set<Int> {
+    let url = directory(for: document).appendingPathComponent("detached-versions.json")
+    guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+    return Set(try JSONDecoder().decode([Int].self, from: Data(contentsOf: url)))
+  }
+
+  public static func setDetachedVersions(_ numbers: Set<Int>, for document: URL) throws {
+    try JSONEncoder().encode(numbers.sorted()).write(
+      to: directory(for: document).appendingPathComponent("detached-versions.json"), options: .atomic)
+  }
+
+  /// Detach a sidebar snapshot as an editable prompt; its immutable database history remains intact.
+  public static func detachVersion(_ number: Int, for document: URL, to destination: URL) throws {
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      throw PromptIterationError.validation("目标位置已有同名文件，请先重命名。")
+    }
+    let original = try detachedVersions(for: document)
+    try FileManager.default.copyItem(at: versionURL(number, for: document), to: destination)
+    do { try setDetachedVersions(original.union([number]), for: document) }
+    catch { try? FileManager.default.removeItem(at: destination); throw error }
+  }
+
+  public static func versionNumber(_ url: URL) -> Int? {
+    let name = url.deletingPathExtension().lastPathComponent
+    guard url.pathExtension.lowercased() == "md", name.first == "V",
+      let number = Int(name.dropFirst()), number > 0 else { return nil }
+    return number
+  }
+
+  /// Upgrade the original one-prompt-per-folder layout once, retaining version identity.
+  public static func migrateLegacyFolder(_ parent: URL) throws {
+    let fm = FileManager.default
+    let files = try fm.contentsOfDirectory(at: parent, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+    let documents = files.filter {
+      $0.pathExtension.lowercased() == "md" && versionNumber($0) == nil
+        && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        && (try? String(contentsOf: $0, encoding: .utf8)).map(PromptMarkdown.isStructuredPrompt) == true
+    }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    guard let owner = documents.first(where: { $0.lastPathComponent == "System Prompt.md" }) ?? documents.first else { return }
+    let legacyDB = parent.appendingPathComponent(".prompt-history/workspace.db")
+    let newDB = databaseURL(for: owner)
+    var moves: [(URL, URL)] = []
+    if fm.fileExists(atPath: legacyDB.path), !fm.fileExists(atPath: newDB.path) {
+      // Include SQLite sidecars if a previous process left them behind.
+      for suffix in ["", "-wal", "-shm"] {
+        let old = URL(fileURLWithPath: legacyDB.path + suffix)
+        if fm.fileExists(atPath: old.path) { moves.append((old, URL(fileURLWithPath: newDB.path + suffix))) }
+      }
+    }
+    for file in files {
+      if let number = versionNumber(file) {
+        let destination = versionURL(number, for: owner)
+        if !fm.fileExists(atPath: destination.path) { moves.append((file, destination)) }
+      }
+    }
+    guard !moves.isEmpty else { return }
+    try fm.createDirectory(at: directory(for: owner), withIntermediateDirectories: true)
+    var completed: [(URL, URL)] = []
+    do {
+      for (old, new) in moves { try fm.moveItem(at: old, to: new); completed.append((old, new)) }
+    } catch {
+      for (old, new) in completed.reversed() { try? fm.moveItem(at: new, to: old) }
+      throw error
+    }
+  }
+}
 
 public enum PromptIterationError: LocalizedError, Equatable {
   case validation(String)

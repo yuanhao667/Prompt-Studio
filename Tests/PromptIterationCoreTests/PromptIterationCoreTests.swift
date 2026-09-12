@@ -2,6 +2,241 @@ import XCTest
 @testable import PromptIterationCore
 
 final class PromptIterationCoreTests: XCTestCase {
+  func testDocumentRenamePreservesVersionDataAndSiblingPositions() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let document = root.appendingPathComponent("旧名称.md")
+    let destination = root.appendingPathComponent("新名称.md")
+    let repository = try WorkspaceRepository(databaseURL: PromptDocumentStorage.databaseURL(for: document))
+    var workspace = try repository.loadOrCreateWorkspace()
+    workspace.sections[0].content = "改名不丢失"
+    _ = try repository.saveVersion(workspace: workspace, note: "版本")
+    let markdown = PromptMarkdown.renderAll(workspace.sections)
+    try markdown.write(to: document, atomically: true, encoding: .utf8)
+    try markdown.write(to: PromptDocumentStorage.versionURL(1, for: document), atomically: true, encoding: .utf8)
+    let keys = ["其他文件.md", "旧名称.md/V1.md", "旧名称.md", "末尾文件.md"]
+    try WorkspaceItemOrder.move(source: document, destination: destination, before: "末尾文件.md",
+      sourceKeys: keys, destinationKeys: keys,
+      attachments: [(PromptDocumentStorage.directory(for: document), PromptDocumentStorage.directory(for: destination))])
+    let expected = ["其他文件.md", "新名称.md/V1.md", "新名称.md", "末尾文件.md"]
+    XCTAssertEqual(try WorkspaceItemOrder.sortedKeys(Array(expected.reversed()), in: root), expected)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: document.path))
+    let restored = try WorkspaceRepository(databaseURL: PromptDocumentStorage.databaseURL(for: destination))
+    XCTAssertEqual(try restored.versionSections(projectID: workspace.id, number: 1)[0].content, "改名不丢失")
+    XCTAssertEqual(try String(contentsOf: PromptDocumentStorage.versionURL(1, for: destination), encoding: .utf8), markdown)
+    XCTAssertEqual(try PromptDocumentStorage.markdownFilename(from: "  新名称.MD  "), "新名称.md")
+    for invalid in ["", ".md", "..", ".隐藏", "父/子", "父:子", "父\n子"] {
+      XCTAssertThrowsError(try PromptDocumentStorage.markdownFilename(from: invalid))
+    }
+  }
+
+  func testVersionFileRenameKeepsNumberHistoryAndFutureStorageLocation() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let document = root.appendingPathComponent("Prompt.md")
+    let repository = try WorkspaceRepository(databaseURL: PromptDocumentStorage.databaseURL(for: document))
+    var workspace = try repository.loadOrCreateWorkspace()
+    workspace.sections[0].content = "不可变历史"
+    _ = try repository.saveVersion(workspace: workspace, note: "版本")
+    let markdown = PromptMarkdown.renderAll(workspace.sections)
+    try markdown.write(to: document, atomically: true, encoding: .utf8)
+    let oldSnapshot = PromptDocumentStorage.versionURL(1, for: document)
+    try markdown.write(to: oldSnapshot, atomically: true, encoding: .utf8)
+    try PromptDocumentStorage.renameVersion(1, for: document, to: "精简版")
+    let renamed = PromptDocumentStorage.versionURL(1, for: document)
+    XCTAssertEqual(renamed.lastPathComponent, "精简版.md")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: oldSnapshot.path))
+    XCTAssertEqual(try String(contentsOf: renamed, encoding: .utf8), markdown)
+    XCTAssertEqual(try PromptDocumentStorage.snapshots(for: document).map(\.number), [1])
+    XCTAssertEqual(try repository.versionSections(projectID: workspace.id, number: 1)[0].content, "不可变历史")
+    try PromptDocumentStorage.migrateLegacyFolder(root)
+    XCTAssertEqual(PromptDocumentStorage.versionURL(1, for: document), renamed)
+    XCTAssertThrowsError(try PromptDocumentStorage.renameVersion(1, for: document, to: "V2"))
+    let collision = PromptDocumentStorage.directory(for: document).appendingPathComponent("已存在.md")
+    try Data("保留".utf8).write(to: collision)
+    XCTAssertThrowsError(try PromptDocumentStorage.renameVersion(1, for: document, to: "已存在"))
+    XCTAssertEqual(try String(contentsOf: collision, encoding: .utf8), "保留")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: renamed.path))
+  }
+
+  func testMixedFileAndFolderOrderPersistsIncludingLastPosition() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let folder = try WorkspaceFolderOperations.createFolder(named: "A 文件夹", in: root)
+    let first = root.appendingPathComponent("B.md")
+    let last = root.appendingPathComponent("C.md")
+    try Data().write(to: first)
+    try Data().write(to: last)
+    let names = [folder.lastPathComponent, first.lastPathComponent, last.lastPathComponent]
+    try WorkspaceItemOrder.move(source: folder, destination: folder, before: nil, sourceKeys: names, destinationKeys: names)
+    var order = try WorkspaceItemOrder.sortedKeys(names, in: root)
+    XCTAssertEqual(order, ["B.md", "C.md", "A 文件夹"])
+    try WorkspaceItemOrder.move(source: first, destination: first, before: nil, sourceKeys: order, destinationKeys: order)
+    order = try WorkspaceItemOrder.sortedKeys(names, in: root)
+    XCTAssertEqual(order, ["C.md", "A 文件夹", "B.md"])
+    try WorkspaceItemOrder.move(source: first, destination: first, before: "C.md", sourceKeys: order, destinationKeys: order)
+    XCTAssertEqual(try WorkspaceItemOrder.sortedKeys(names, in: root), ["B.md", "C.md", "A 文件夹"])
+    XCTAssertEqual(WorkspaceItemOrder.placing("C.md", before: "C.md", in: names), names)
+    XCTAssertEqual(try WorkspaceItemOrder.sortedKeys(["C.md", "A 文件夹", "新文件.md"], in: root), ["C.md", "A 文件夹", "新文件.md"])
+  }
+
+  func testMovingFilesBetweenFoldersKeepsSeparateHistoriesAndOrder() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let nested = try WorkspaceFolderOperations.createFolder(named: "子目录", in: root)
+    let source = nested.appendingPathComponent("来源.md")
+    let other = root.appendingPathComponent("已有.md")
+    for (document, content) in [(source, "来源历史"), (other, "已有历史")] {
+      let repository = try WorkspaceRepository(databaseURL: PromptDocumentStorage.databaseURL(for: document))
+      var workspace = try repository.loadOrCreateWorkspace()
+      workspace.sections[0].content = content
+      try repository.saveDraft(workspace)
+      _ = try repository.saveVersion(workspace: workspace, note: "历史")
+      try PromptMarkdown.renderAll(workspace.sections).write(to: document, atomically: true, encoding: .utf8)
+      try PromptMarkdown.renderAll(workspace.sections).write(to: PromptDocumentStorage.versionURL(1, for: document), atomically: true, encoding: .utf8)
+    }
+    let destination = try WorkspaceFolderOperations.moveDestination(for: source, into: root, root: root)
+    try WorkspaceItemOrder.move(source: source, destination: destination, before: other.lastPathComponent,
+      sourceKeys: [source.lastPathComponent], destinationKeys: [nested.lastPathComponent, other.lastPathComponent],
+      attachments: [(PromptDocumentStorage.directory(for: source), PromptDocumentStorage.directory(for: destination))])
+    XCTAssertEqual(try WorkspaceItemOrder.sortedKeys(["子目录", "已有.md", "来源.md"], in: root), ["子目录", "来源.md", "已有.md"])
+    for (document, content) in [(destination, "来源历史"), (other, "已有历史")] {
+      let repository = try WorkspaceRepository(databaseURL: PromptDocumentStorage.databaseURL(for: document))
+      var workspace = try repository.loadOrCreateWorkspace()
+      XCTAssertEqual(try repository.versionSections(projectID: workspace.id, number: 1)[0].content, content)
+      workspace.sections[0].content += "继续编辑"
+      try repository.saveDraft(workspace)
+      XCTAssertTrue(try String(contentsOf: PromptDocumentStorage.versionURL(1, for: document), encoding: .utf8).contains(content))
+    }
+    // Move back into the nested directory and append to its last position.
+    try WorkspaceItemOrder.move(source: destination, destination: source, before: nil,
+      sourceKeys: ["子目录", "来源.md", "已有.md"], destinationKeys: [],
+      attachments: [(PromptDocumentStorage.directory(for: destination), PromptDocumentStorage.directory(for: source))])
+    XCTAssertTrue(FileManager.default.fileExists(atPath: PromptDocumentStorage.databaseURL(for: source).path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    XCTAssertEqual(try WorkspaceItemOrder.sortedKeys(["来源.md"], in: nested), ["来源.md"])
+  }
+
+  func testLegacyFolderMigrationAndVersionDetachmentPreserveImmutableHistory() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let legacy = try WorkspaceRepository(databaseURL: root.appendingPathComponent(".prompt-history/workspace.db"))
+    var workspace = try legacy.loadOrCreateWorkspace()
+    workspace.sections[0].content = "旧版内容"
+    _ = try legacy.saveVersion(workspace: workspace, note: "旧版本")
+    let document = root.appendingPathComponent("System Prompt.md")
+    let markdown = PromptMarkdown.renderAll(workspace.sections)
+    try markdown.write(to: document, atomically: true, encoding: .utf8)
+    try markdown.write(to: root.appendingPathComponent("V1.md"), atomically: true, encoding: .utf8)
+    try PromptDocumentStorage.migrateLegacyFolder(root)
+    try PromptDocumentStorage.migrateLegacyFolder(root)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("V1.md").path))
+    let repository = try WorkspaceRepository(databaseURL: PromptDocumentStorage.databaseURL(for: document))
+    XCTAssertEqual(try repository.versionSections(projectID: workspace.id, number: 1)[0].content, "旧版内容")
+    let nested = try WorkspaceFolderOperations.createFolder(named: "目标", in: root)
+    let detached = nested.appendingPathComponent("System Prompt V1.md")
+    try PromptDocumentStorage.detachVersion(1, for: document, to: detached)
+    XCTAssertEqual(try PromptDocumentStorage.detachedVersions(for: document), [1])
+    XCTAssertEqual(try String(contentsOf: detached, encoding: .utf8), markdown)
+    XCTAssertEqual(try repository.versionSections(projectID: workspace.id, number: 1)[0].content, "旧版内容")
+    try "独立修改".write(to: detached, atomically: true, encoding: .utf8)
+    XCTAssertTrue(try String(contentsOf: PromptDocumentStorage.versionURL(1, for: document), encoding: .utf8).contains("旧版内容"))
+    XCTAssertThrowsError(try PromptDocumentStorage.detachVersion(1, for: document, to: detached))
+    XCTAssertEqual(try String(contentsOf: detached, encoding: .utf8), "独立修改")
+  }
+
+  func testMoveRejectsHistoryCollisionWithoutMovingFileOrChangingOrder() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let nested = try WorkspaceFolderOperations.createFolder(named: "子目录", in: root)
+    let source = nested.appendingPathComponent("Prompt.md")
+    let destination = root.appendingPathComponent("Prompt.md")
+    try Data("保留原文".utf8).write(to: source)
+    let history = PromptDocumentStorage.directory(for: source)
+    let conflict = PromptDocumentStorage.directory(for: destination)
+    try FileManager.default.createDirectory(at: history, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: conflict, withIntermediateDirectories: true)
+    try WorkspaceItemOrder.save(["子目录"], in: root)
+    XCTAssertThrowsError(try WorkspaceItemOrder.move(source: source, destination: destination, before: nil,
+      sourceKeys: ["Prompt.md"], destinationKeys: ["子目录"], attachments: [(history, conflict)]))
+    XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "保留原文")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    XCTAssertEqual(try WorkspaceItemOrder.sortedKeys(["子目录"], in: root), ["子目录"])
+    // A failure after the document and history already moved must roll both back.
+    try FileManager.default.removeItem(at: conflict)
+    XCTAssertThrowsError(try WorkspaceItemOrder.move(source: source, destination: destination, before: nil,
+      sourceKeys: ["Prompt.md"], destinationKeys: ["子目录"], attachments: [
+        (history, conflict), (nested.appendingPathComponent("不存在"), root.appendingPathComponent("不存在")),
+      ]))
+    XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "保留原文")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: history.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: conflict.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+  }
+
+  func testNestedFolderMovesPreservePromptAndHistory() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let parent = try WorkspaceFolderOperations.createFolder(named: "父目录", in: root)
+    let child = try WorkspaceFolderOperations.createFolder(named: "子目录", in: parent)
+    let project = try WorkspaceFolderOperations.createFolder(named: "Prompt", in: child)
+    let document = project.appendingPathComponent("System Prompt.md")
+    let database = project.appendingPathComponent(".prompt-history/workspace.db")
+    var repository = try WorkspaceRepository(databaseURL: database)
+    var workspace = try repository.loadOrCreateWorkspace()
+    workspace.sections[0].content = "移动后仍可编辑"
+    try repository.saveDraft(workspace)
+    _ = try repository.saveVersion(workspace: workspace, note: "保留历史")
+    try PromptMarkdown.renderAll(workspace.sections).write(to: document, atomically: true, encoding: .utf8)
+    try Data().write(to: child.appendingPathComponent(".prompt-iteration-folder"))
+
+    // Move the entire nested subtree out to the root, then into a different folder.
+    let topLevel = try WorkspaceFolderOperations.moveDestination(for: child, into: root, root: root)
+    try FileManager.default.moveItem(at: child, to: topLevel)
+    let sibling = try WorkspaceFolderOperations.createFolder(named: "另一目录", in: root)
+    let nested = try WorkspaceFolderOperations.moveDestination(for: topLevel, into: sibling, root: root)
+    try FileManager.default.moveItem(at: topLevel, to: nested)
+    let movedDocument = try XCTUnwrap(WorkspaceFolderOperations.rebasedURL(document, from: child, to: nested))
+    XCTAssertTrue(try String(contentsOf: movedDocument, encoding: .utf8).contains("移动后仍可编辑"))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: nested.appendingPathComponent(".prompt-iteration-folder").path))
+    let movedDatabase = try XCTUnwrap(WorkspaceFolderOperations.rebasedURL(database, from: child, to: nested))
+    repository = try WorkspaceRepository(databaseURL: movedDatabase)
+    XCTAssertEqual(try repository.listVersions(projectID: workspace.id).count, 1)
+    XCTAssertEqual(try repository.versionSections(projectID: workspace.id, number: 1)[0].content, "移动后仍可编辑")
+    workspace.sections[0].content = "继续保存"
+    try repository.saveDraft(workspace)
+    XCTAssertEqual(try repository.loadOrCreateWorkspace().sections[0].content, "继续保存")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: child.path))
+    XCTAssertNil(WorkspaceFolderOperations.rebasedURL(parent.appendingPathComponent("子目录2/test.md"), from: child, to: nested))
+  }
+
+  func testFolderMoveRejectsCyclesConflictsAndWorkspaceEscape() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let parent = try WorkspaceFolderOperations.createFolder(named: "父目录", in: root)
+    let child = try WorkspaceFolderOperations.createFolder(named: "子目录", in: parent)
+    XCTAssertThrowsError(try WorkspaceFolderOperations.moveDestination(for: parent, into: parent, root: root))
+    XCTAssertThrowsError(try WorkspaceFolderOperations.moveDestination(for: parent, into: child, root: root))
+    XCTAssertThrowsError(try WorkspaceFolderOperations.moveDestination(for: root, into: child, root: root))
+    XCTAssertThrowsError(try WorkspaceFolderOperations.moveDestination(for: child, into: root.deletingLastPathComponent(), root: root))
+    XCTAssertEqual(try WorkspaceFolderOperations.moveDestination(for: child, into: parent, root: root), child)
+    let conflict = try WorkspaceFolderOperations.createFolder(named: "子目录", in: root)
+    XCTAssertThrowsError(try WorkspaceFolderOperations.moveDestination(for: child, into: root, root: root))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: conflict.path))
+    let alias = root.appendingPathComponent("外部链接")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root.deletingLastPathComponent())
+    XCTAssertThrowsError(try WorkspaceFolderOperations.moveDestination(for: child, into: alias, root: root))
+    for name in ["", " ", ".", "..", ".隐藏", "父/子", "父:子", "父\n子", "父目录"] {
+      XCTAssertThrowsError(try WorkspaceFolderOperations.createFolder(named: name, in: root))
+    }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: child.path))
+  }
+
   func testDefaultWorkspaceAutosaves() throws {
     let context = try TestContext()
     defer { context.cleanup() }

@@ -9,3 +9,6 @@ xcuserdata/
 *.db-shm
 *.db-wal
 .DS_Store
+.prompt-history/
+.prompt-order.json
+.prompt-iteration-folder
