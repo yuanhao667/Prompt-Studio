@@ -2,6 +2,108 @@ import XCTest
 @testable import PromptIterationCore
 
 final class PromptIterationCoreTests: XCTestCase {
+  func testTextDifferenceReconstructsBothPromptsIncludingWhitespaceAndRepeatedLines() {
+    let cases = [
+      ("", ""), ("", "新增"), ("删除", ""), ("相同\n", "相同\n"),
+      ("角色\n旧任务\n格式\n", "角色\n新任务\n格式\n"),
+      ("重复\n重复\n尾", "重复\n新增\n重复\n尾\n"),
+      ("  中文 👩‍🏫\n\n", "中文 👩‍🏫\n\n\n"), ("a\r\nb", "a\nb"),
+      ("第一行\n第二行", "第二行\n第一行"),
+    ]
+    for (old, new) in cases {
+      let changes = PromptTextDifference.changes(from: old, to: new)
+      XCTAssertEqual(changes.filter { $0.kind != .added }.map(\.text).joined(), old)
+      XCTAssertEqual(changes.filter { $0.kind != .removed }.map(\.text).joined(), new)
+    }
+    let replacement = PromptTextDifference.changes(from: "保留\n旧任务\n", to: "保留\n新任务\n")
+    XCTAssertEqual(replacement.filter { $0.kind == .removed }.map(\.text), ["旧任务\n"])
+    XCTAssertEqual(replacement.filter { $0.kind == .added }.map(\.text), ["新任务\n"])
+  }
+
+  func testOptimizationRequirementOnlyAffectsOptimizationAndKeepsResponseContract() {
+    let requirement = "只调整输出格式，保留教学目标。"
+    let optimized = PromptGenerationInstructions.systemMessage(customPrompt: "", optimizationRequest: requirement)
+    XCTAssertTrue(optimized.contains("本次优化要求：\(requirement)"))
+    XCTAssertTrue(optimized.contains("保留无关内容"))
+    XCTAssertTrue(optimized.contains("每个输入 id 必须原样返回一次"))
+    let creation = PromptGenerationInstructions.systemMessage(customPrompt: "", isCreating: true, optimizationRequest: requirement)
+    XCTAssertFalse(creation.contains(requirement))
+    let blank = PromptGenerationInstructions.systemMessage(customPrompt: "", optimizationRequest: " \n\t")
+    XCTAssertFalse(blank.contains("本次优化要求："))
+  }
+
+  func testFreeformMarkdownPreservesTextAndVersionHistory() throws {
+    let context = try TestContext()
+    defer { context.cleanup() }
+    for markdown in ["", "  直接写提示词\n\n", "先说明要求\n# 自定义标题\n保留这段", "```markdown\n# 示例标题\n```\n"] {
+      var workspace = try context.repository.loadOrCreateWorkspace()
+      workspace.sections = PromptMarkdown.parse(markdown)
+      XCTAssertEqual(workspace.sections.count, 1)
+      XCTAssertTrue(workspace.sections[0].isFreeform)
+      XCTAssertEqual(PromptMarkdown.renderAll(workspace.sections), markdown)
+      XCTAssertEqual(PromptMarkdown.render(workspace.sections), markdown)
+      try context.repository.saveDraft(workspace)
+      let version = try context.repository.saveVersion(workspace: workspace)
+      let reopened = try WorkspaceRepository(databaseURL: context.databaseURL)
+      XCTAssertEqual(try reopened.loadOrCreateWorkspace().sections, workspace.sections)
+      XCTAssertEqual(try reopened.versionSections(projectID: workspace.id, number: version.number), workspace.sections)
+    }
+  }
+
+  func testEnablingFrameworkPreservesFreeformContentAndExistingSections() {
+    let markdown = "先说明要求\n# 自定义标题\n原正文"
+    let framework = PromptMarkdown.frameworkSections(from: [PromptSection.freeform(markdown)])
+    XCTAssertEqual(framework.count, 12)
+    XCTAssertEqual(framework[0].content, markdown)
+    XCTAssertEqual(framework[0].title, "角色与定位")
+    XCTAssertEqual(PromptMarkdown.frameworkSections(from: framework), framework)
+    XCTAssertEqual(PromptMarkdown.frameworkSections(from: []).count, 12)
+    var custom = [PromptSection(id: "custom", title: "自定义", content: "隐藏内容", position: 0)]
+    custom[0].isIncluded = false
+    XCTAssertEqual(PromptMarkdown.frameworkSections(from: custom), custom)
+  }
+
+  func testMarkdownParserKeepsHeadingsInsideCodeFencesInTheirSection() {
+    let markdown = "# 角色与定位\n```markdown\n# 示例标题\n```\n\n# 任务目标\n目标"
+    let sections = PromptMarkdown.parse(markdown)
+    XCTAssertEqual(sections.map(\.title), ["角色与定位", "任务目标"])
+    XCTAssertEqual(sections[0].content, "```markdown\n# 示例标题\n```")
+    XCTAssertEqual(PromptMarkdown.renderAll(sections), markdown)
+  }
+
+  func testMarkdownParserKeepsNestedAndInvalidClosingFencesAsContent() {
+    for marker in ["`", "~"] {
+      let fence = String(repeating: marker, count: 4)
+      let shorter = String(repeating: marker, count: 3)
+      let markdown = "# 角色\n\(fence)markdown\n\(shorter)\n# 示例\n\(fence)仍是正文\n# 另一个示例\n\(fence)\n\n# 任务\n目标"
+      let sections = PromptMarkdown.parse(markdown)
+      XCTAssertEqual(sections.map(\.title), ["角色", "任务"])
+      XCTAssertEqual(PromptMarkdown.renderAll(sections), markdown)
+    }
+  }
+
+  func testCustomGenerationPromptKeepsRequiredResponseFormatAndEmptyFallback() {
+    let custom = "只用中文，保留业务事实。"
+    let message = PromptGenerationInstructions.systemMessage(customPrompt: custom)
+    XCTAssertTrue(message.hasPrefix(custom))
+    XCTAssertTrue(message.contains("NDJSON"))
+    XCTAssertTrue(message.contains("每个输入 id 必须原样返回一次"))
+    XCTAssertFalse(message.contains(PromptGenerationInstructions.defaultPrompt))
+    for empty in ["", " \n\t"] {
+      XCTAssertTrue(PromptGenerationInstructions.systemMessage(customPrompt: empty)
+        .hasPrefix(PromptGenerationInstructions.defaultPrompt))
+    }
+    let creation = PromptGenerationInstructions.systemMessage(customPrompt: "", isCreating: true)
+    XCTAssertTrue(creation.hasPrefix(PromptGenerationInstructions.defaultCreationPrompt))
+    XCTAssertTrue(creation.contains("根据需求描述生成完整提示词正文"))
+    XCTAssertTrue(creation.contains("不要重复开场介绍"))
+    XCTAssertTrue(PromptGenerationInstructions.defaultCreationPrompt.hasPrefix("## 角色定位\n"))
+    XCTAssertTrue(PromptGenerationInstructions.defaultCreationPrompt.hasSuffix("等待用户回应。如果需要，提出澄清问题，然后使用上述结构生成最终提示词。"))
+    XCTAssertTrue(creation.contains("NDJSON"))
+    XCTAssertTrue(PromptGenerationInstructions.systemMessage(customPrompt: custom, isCreating: true)
+      .hasPrefix(custom))
+  }
+
   func testDocumentRenamePreservesVersionDataAndSiblingPositions() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

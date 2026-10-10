@@ -48,8 +48,8 @@ Prompt Studio 是一个原生、本地优先的 Prompt 编辑器。它把 Prompt
 ## 🧭 核心工作流
 
 1. **组织** — 新建或打开本地 Prompt 文件夹，在左侧文件树管理结构化 Markdown 文档。
-2. **比较** — 点击“AI 生成”，在只读 AI 参考稿与可编辑 System Prompt 之间逐段判断和修改。
-3. **沉淀** — 草稿自动保存；确认成果后手动保存为新的不可变版本，随时预览、复制或基于旧版本继续编辑。
+2. **比较** — 在当前编辑区并排选择工作稿、历史版本或 AI 参考稿；右侧标出文字变化，也可使用同一条测试输入比较输出效果。
+3. **沉淀** — 工作稿自动保存；对比中的修改可恢复，点击“应用”后才更新工作稿，点击“保存为新版本”创建不可变历史快照。
 
 <a id="features"></a>
 
@@ -59,10 +59,10 @@ Prompt Studio 是一个原生、本地优先的 Prompt 编辑器。它把 Prompt
 | --- | --- |
 | 本地工作区 | 新建多层文件夹；文件与文件夹均可拖入、拖出、混合排序，顺序自动保存 |
 | 文件重命名 | 文件的“…”和右键菜单均可改名；工作稿、历史版本可分别改名，保留历史内容和排序 |
-| 结构化编辑 | 默认生成 12 个维度；支持新增、删除、改名、隐藏与拖动排序 |
-| AI 对照 | 使用 DeepSeek V4 Flash / V4 Pro 生成只读参考稿，与正式稿并排编辑 |
+| 结构化编辑 | 默认直接编辑正文；开启“框架”后按维度编辑，支持新增、删除、改名、隐藏与拖动排序 |
+| AI 对照 | 使用 DeepSeek V4.1 Flash（`deepseek-flash`）生成 Prompt、优化右侧内容或运行效果对比；AI 参考稿需手动确认应用 |
 | 版本历史 | 创建不可变快照，预览 Markdown、加入对比或基于旧版迭代；不同 Prompt 的历史独立保存 |
-| 自动保存 | System Prompt 实时写回本地 Markdown；SQLite 仅保存版本和对照元数据 |
+| 自动保存 | 工作稿实时写回 Markdown；对比右侧未应用的修改独立保存在本地，设置中的 AI 生成系统提示词修改后立即生效 |
 | 隐私边界 | API Key、接口地址和模型配置保存在当前 Mac 的应用偏好设置中，不写入 Prompt 或 App 包 |
 
 <a id="data"></a>
@@ -81,6 +81,7 @@ My Workspace/
 └── .prompt-history/
     └── <文件名哈希>/              # 每份 Prompt 独立保存历史
         ├── workspace.db          # 版本与对照元数据
+        ├── comparison-edits.json # 对比中尚未确认的修改
         └── V1.md                 # 不可变历史快照，可单独改名
 ```
 
@@ -94,7 +95,7 @@ My Workspace/
 
 ## 🚀 下载安装
 
-### [⬇️ 下载 Prompt Studio v0.1.0（Apple Silicon DMG）](https://github.com/yuanhao667/Prompt-Studio/releases/download/v0.1.0/Prompt.Studio.dmg)
+### [⬇️ 下载 Prompt Studio v0.1.1（Apple Silicon DMG）](https://github.com/yuanhao667/Prompt-Studio/releases/download/v0.1.1/Prompt.Studio.dmg)
 
 点击上面的链接会直接下载 macOS 安装包。当前版本支持 Apple Silicon，要求 macOS 13 或更高版本。
 
@@ -110,20 +111,20 @@ My Workspace/
 3. 找到关于 `Prompt Studio` 的提示，点击“仍要打开”。这个按钮会在首次尝试启动后出现。
 4. 在再次弹出的确认窗口中点击“打开”；此后即可正常双击启动。
 
-操作方法可参阅 [Apple 官方说明](https://support.apple.com/zh-cn/guide/mac-help/-mh40616/mac)。版本说明见 [Prompt Studio v0.1.0](https://github.com/yuanhao667/Prompt-Studio/releases/tag/v0.1.0)。
+操作方法可参阅 [Apple 官方说明](https://support.apple.com/zh-cn/guide/mac-help/-mh40616/mac)。版本说明见 [Prompt Studio v0.1.1](https://github.com/yuanhao667/Prompt-Studio/releases/tag/v0.1.1)。
 
 ## 🛠️ 从源码运行
 
-使用 Xcode 打开 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行当前源码，按 `⌘U` 运行 17 项核心测试。
+使用 Xcode 打开 `PromptIterationAssistant.xcodeproj`，选择 `PromptIterationAssistant` scheme，按 `⌘R` 运行当前源码，按 `⌘U` 运行核心测试。
 
 ```bash
 xcodebuild -project PromptIterationAssistant.xcodeproj \
   -scheme PromptIterationAssistant -destination 'platform=macOS' test
 ```
 
-Swift Package 入口也保留：`swift run PromptIterationAssistant` 或 `swift run PromptIterationCoreChecks`。
+Swift Package 入口也保留：`swift run PromptIterationAssistant` 或 `swift run PromptIterationCoreChecks`。运行 `swift test` 可同时验证核心逻辑与 App 的保存、对比和 AI 请求流程。
 
-测试覆盖嵌套移动、文件与文件夹混合排序、末尾插入、历史隔离、文件及版本改名、同名冲突和失败回滚。本次文件管理更新包含在当前源码中。
+测试覆盖嵌套移动、文件与文件夹混合排序、末尾插入、历史隔离、文件及版本改名、同名冲突和失败回滚。
 
 ## 🙏 参考来源
 
@@ -142,9 +143,9 @@ SQLite 封装、事务写入和不可变版本思路改编自仓库内的 `promp
 </p>
 
 <p align="center">
-  <a href="https://github.com/yuanhao667/Prompt-Studio/releases/download/v0.1.0/Prompt.Studio.dmg">Download for macOS</a>
+  <a href="https://github.com/yuanhao667/Prompt-Studio/releases/download/v0.1.1/Prompt.Studio.dmg">Download for macOS</a>
   ·
-  <a href="https://github.com/yuanhao667/Prompt-Studio/releases/tag/v0.1.0">Release Notes</a>
+  <a href="https://github.com/yuanhao667/Prompt-Studio/releases/tag/v0.1.1">Release Notes</a>
   ·
   <a href="https://github.com/yuanhao667/Prompt-Studio/issues">Report Issues</a>
 </p>
