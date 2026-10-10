@@ -2631,8 +2631,9 @@ private struct DeepSeekSettingsView: View {
           .padding(.horizontal, 14)
           .padding(.vertical, 9)
           .background(.regularMaterial, in: Capsule())
-          .overlay(Capsule().stroke(.separator))
-          .shadow(radius: 6, y: 2)
+          .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+          .shadow(color: .black.opacity(0.10), radius: 18, x: 0, y: 6)
+          .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
           .padding(.top, 14)
           .transition(.move(edge: .top).combined(with: .opacity))
       }
@@ -2963,8 +2964,9 @@ struct ContentView: View {
           .padding(.horizontal, 14)
           .padding(.vertical, 9)
           .background(.regularMaterial, in: Capsule())
-          .overlay(Capsule().stroke(.separator))
-          .shadow(radius: 6, y: 2)
+          .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+          .shadow(color: .black.opacity(0.10), radius: 18, x: 0, y: 6)
+          .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
           .padding(.top, 14)
           .transition(.move(edge: .top).combined(with: .opacity))
       }
