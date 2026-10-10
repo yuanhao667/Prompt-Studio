@@ -25,6 +25,8 @@ let package = Package(
       name: "PromptIterationCoreChecks",
       dependencies: ["PromptIterationCore"]
     ),
+    .testTarget(name: "PromptIterationCoreTests", dependencies: ["PromptIterationCore"]),
+    .testTarget(name: "PromptIterationAssistantTests", dependencies: ["PromptIterationAssistant"]),
   ],
   swiftLanguageModes: [.v5]
 )

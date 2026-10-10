@@ -321,6 +321,12 @@ public struct PromptSection: Identifiable, Equatable, Sendable {
       )
     }
   }
+
+  public var isFreeform: Bool { id == "freeform" }
+
+  public static func freeform(_ content: String = "") -> PromptSection {
+    PromptSection(id: "freeform", title: "正文", content: content, position: 0)
+  }
 }
 
 public enum PromptMarkdown {
@@ -333,8 +339,12 @@ public enum PromptMarkdown {
   }
 
   private static func renderSections(_ sections: [PromptSection]) -> String {
-    sections
+    if sections.count == 1, let section = sections.first, section.isFreeform {
+      return section.content
+    }
+    return sections
       .compactMap { section in
+        if section.isFreeform { return section.content }
         let title = section.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let content = section.content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty || !content.isEmpty else { return nil }
@@ -349,6 +359,7 @@ public enum PromptMarkdown {
     var parsed: [(title: String, content: [String])] = []
     var currentTitle: String?
     var currentContent: [String] = []
+    var fence: String?
 
     func appendCurrent() {
       guard let currentTitle else { return }
@@ -357,24 +368,36 @@ public enum PromptMarkdown {
 
     for line in markdown.components(separatedBy: .newlines) {
       let trimmed = line.trimmingCharacters(in: .whitespaces)
-      if trimmed.hasPrefix("#"), !trimmed.hasPrefix("##") {
+      if let openFence = fence {
+        if trimmed.hasPrefix(openFence),
+          trimmed.drop(while: { $0 == openFence.first }).trimmingCharacters(in: .whitespaces).isEmpty {
+          fence = nil
+        }
+        currentContent.append(line)
+        continue
+      }
+      if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+        fence = String(trimmed.prefix(while: { $0 == trimmed.first }))
+      }
+      if trimmed.hasPrefix("# ") {
         let title = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
         if !title.isEmpty {
+          if currentTitle == nil,
+            !currentContent.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return [PromptSection.freeform(markdown)]
+          }
           appendCurrent()
           currentTitle = title
           currentContent = []
           continue
         }
       }
-      if currentTitle != nil { currentContent.append(line) }
+      currentContent.append(line)
     }
     appendCurrent()
 
     if parsed.isEmpty {
-      var sections = PromptSection.defaults()
-      let content = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !content.isEmpty { sections[0].content = content }
-      return sections
+      return [PromptSection.freeform(markdown)]
     }
 
     return parsed.enumerated().map { index, item in
@@ -388,6 +411,13 @@ public enum PromptMarkdown {
     }
   }
 
+  public static func frameworkSections(from sections: [PromptSection]) -> [PromptSection] {
+    guard sections.isEmpty || (sections.count == 1 && sections[0].isFreeform) else { return sections }
+    var framework = PromptSection.defaults()
+    framework[0].content = renderAll(sections)
+    return framework
+  }
+
   public static func isStructuredPrompt(_ markdown: String) -> Bool {
     let defaultTitles = Set(PromptSection.defaults().map(\.title))
     let headings: Set<String> = Set(markdown.components(separatedBy: .newlines).compactMap { line in
@@ -397,6 +427,197 @@ public enum PromptMarkdown {
       return title.isEmpty ? nil : title
     })
     return headings.intersection(defaultTitles).count >= 3
+  }
+}
+
+public enum PromptGenerationInstructions {
+  public static let defaultPrompt = "你是 Prompt 优化助手。优化每个栏目中的内容，但不得增加、删除、改名或调整栏目顺序。"
+  public static let defaultCreationPrompt = #"""
+    ## 角色定位
+
+    你是一个提示词生成器，专门创建结构清晰、可验证、低幻觉率的提示词，适用于任何需求场景。你的职责是理解用户需求，拆解复杂任务，必要时协调"专家"角色来验证或优化方案。你可以在关键细节缺失时提出澄清问题，但其他情况下尽量减少摩擦。
+
+    参考元提示最佳实践：
+
+    1. 当用户请求复杂时，将任务分解成更小或更简单的子任务。
+    2. 通过咨询其他专家来获得独立审查，引入"全新视角"。避免让同一个"专家"既创建又验证方案。
+    3. 强调迭代验证，特别是对可能产生错误或幻觉的任务。
+    4. 不鼓励猜测。如果缺乏数据，指示系统声明不确定性。
+    5. 如果需要高级计算或代码，生成一个专门的"Python 专家"角色，在沙盒环境中生成并（如果需要）执行代码。
+    6. 遵循简洁格式；只在必要时向用户寻求澄清，以确保结果准确。
+
+    ---
+
+    ## 背景
+
+    用户带着初步想法、目标或他们想要优化的提示词来找你。他们可能不确定如何组织结构、设置什么限制条件，或者如何减少事实错误。你的元提示方法——可以在需要时协调多个专业专家——旨在产出经过仔细验证的高质量最终提示词。
+
+    ---
+
+    ## 指令
+
+    ### **1. 询问主题**
+
+    - 提示用户说明他们想创建的系统的主要目标或角色。
+    - 如果请求模糊，询问最少数量的澄清问题。
+
+    ### **2. 优化任务**
+
+    - 确认用户的目的、预期输出，以及任何已知的数据源或参考资料。
+    - 鼓励用户指定如何处理事实准确性（例如，不确定时声明免责）。
+
+    ### **3. 分解并分配专家**（仅在需要时）
+
+    - 对于复杂任务，将用户查询分解为逻辑子任务。
+    - 召唤专业"专家"角色（例如，"数学专家"、"文章专家"、"Python 专家"等）来解决或验证每个子任务。
+    - 使用"全新视角"来交叉检查方案。向每个专家提供完整指令，因为他们没有之前互动的记忆。
+
+    ### **4. 减少幻觉**
+
+    - 指示系统在不确定时进行验证或声明免责。
+    - 鼓励引用具体数据源，或在用户需要最大事实可靠性时指示系统询问数据源。
+
+    ### **5. 定义输出格式**
+
+    - 确认用户希望最终输出或方案如何呈现（项目符号、步骤或结构化模板）。
+    - 如果数据不完整，鼓励使用免责声明或引用。
+
+    ### **6. 生成提示词**
+
+    - 将所有用户需求和澄清整合成一个连贯的提示词，包含：
+        - 系统角色或人设，强调验证事实和在需要时声明不确定性。
+        - 描述用户具体任务或情况的背景。
+        - 如何解决或回应的清晰指令，可能引用专业工具/专家。
+        - 风格、长度或免责声明的限制条件。
+        - 输出的最终格式或结构。
+
+    ### **7. 验证和交付**
+
+    - 如果你使用了专家，提及他们的审查或说明最终方案是如何确认的。
+    - 呈现最终优化的提示词，确保组织有序、全面且易于遵循。
+
+    ---
+
+    ## 限制条件
+
+    - 尽量减少与用户的互动，只在用户请求可能导致错误或混淆时才提出后续问题。
+    - 永远不要假设未经验证的事实。相反，声明免责或向用户询问更多数据。
+    - 追求逻辑验证的结果。对于需要复杂计算或编码的任务，使用"Python 专家"或其他相关专家，并总结（或声明免责）任何不确定的部分。
+    - 限制总互动次数，避免让用户感到不知所措。
+
+    ---
+
+    ## 输出格式
+
+    **角色**
+
+    [简短直接的角色定义，强调验证和对不确定性的免责声明。]
+
+    **背景**
+
+    [用户的任务、目标或背景。总结从用户输入中获得的澄清。]
+
+    **指令**
+
+    1. [逐步方法或指令，包括如何查询或验证数据。必要时分解为更小的任务。]
+    2. [如果需要代码或数学，指示"Python 专家"或"数学专家"。如果需要写作或设计，使用"写作专家"等。]
+    3. [关于如何处理不确定或缺失信息的步骤——鼓励免责声明或用户后续查询。]
+
+    **限制条件**
+
+    [列出相关限制（例如，时间、风格、字数、引用）。]
+
+    **输出格式**
+
+    [准确指定用户希望最终内容或方案如何结构化——项目符号、段落、代码块等。]
+
+    **推理过程**
+
+    [仅在用户明确要求思维链或理由时包含。否则省略以保持提示词简洁。]
+
+    **示例**
+
+    [包含用户提供的示例或背景以获得更准确的回应。]
+
+    ---
+
+    ## 用户输入
+
+    回复以下介绍：
+
+    "你想创建的提示词的主题或角色是什么？分享你拥有的任何细节，我会帮你将其优化成清晰、经过验证、幻觉几率最小的提示词。"
+
+    等待用户回应。如果需要，提出澄清问题，然后使用上述结构生成最终提示词。
+    """#
+
+  public static func systemMessage(customPrompt: String, isCreating: Bool = false, optimizationRequest: String = "") -> String {
+    let prompt = customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let requirement = optimizationRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+    return """
+      \(prompt.isEmpty ? (isCreating ? defaultCreationPrompt : defaultPrompt) : prompt)
+
+      当前任务：\(isCreating ? "根据需求描述生成完整提示词正文，而不是改写需求描述本身。用户已在输入框提交主题和需求，不要重复开场介绍或等待第一次回复。关键细节不足时，仅在 content 中提出必要的澄清问题；其他缺失数据用占位符。只生成提示词，不执行其中的任务，不声称已经调用专家、执行代码或验证外部事实。" : "优化用户已有的提示词，保留原有意图。")
+      \(!isCreating && !requirement.isEmpty ? "本次优化要求：\(requirement)\n围绕本次要求修改内容，保留无关内容和用户提供的业务事实。" : "")
+
+      以下是应用必需的返回格式约束：
+      保留输入栏目及其顺序，不得增加、删除、改名或调整栏目顺序。
+      按输入顺序逐个返回栏目，每完成一个栏目就立即输出一行独立 JSON：
+      {"id":"原 id","content":"优化后的内容"}
+      这是 NDJSON，不要输出数组、Markdown 代码围栏、前言或总结。每个输入 id 必须原样返回一次。
+      当栏目 id 为 freeform 时，content 是完整提示词正文，不要额外添加“正文”标题。
+      """
+  }
+}
+
+public struct PromptTextChange: Equatable, Sendable {
+  public enum Kind: Equatable, Sendable { case unchanged, added, removed }
+  public let kind: Kind
+  public var text: String
+}
+
+public enum PromptTextDifference {
+  public static func changes(from old: String, to new: String) -> [PromptTextChange] {
+    guard old != new else { return old.isEmpty ? [] : [.init(kind: .unchanged, text: old)] }
+    func lines(_ text: String) -> [String] {
+      guard !text.isEmpty else { return [] }
+      let parts = text.components(separatedBy: "\n")
+      return parts.enumerated().compactMap { index, part in
+        let line = part + (index < parts.count - 1 ? "\n" : "")
+        return line.isEmpty ? nil : line
+      }
+    }
+    let before = lines(old)
+    let after = lines(new)
+    let difference = after.difference(from: before)
+    var removed = Set<Int>()
+    var added = Set<Int>()
+    for change in difference {
+      switch change {
+      case .remove(let offset, _, _): removed.insert(offset)
+      case .insert(let offset, _, _): added.insert(offset)
+      }
+    }
+    var result: [PromptTextChange] = []
+    var oldIndex = 0
+    var newIndex = 0
+    func append(_ kind: PromptTextChange.Kind, _ text: String) {
+      if result.last?.kind == kind { result[result.count - 1].text += text }
+      else { result.append(.init(kind: kind, text: text)) }
+    }
+    while oldIndex < before.count || newIndex < after.count {
+      if oldIndex < before.count, removed.contains(oldIndex) {
+        append(.removed, before[oldIndex])
+        oldIndex += 1
+      } else if newIndex < after.count, added.contains(newIndex) {
+        append(.added, after[newIndex])
+        newIndex += 1
+      } else {
+        append(.unchanged, before[oldIndex])
+        oldIndex += 1
+        newIndex += 1
+      }
+    }
+    return result
   }
 }
 
@@ -706,7 +927,9 @@ public final class WorkspaceRepository {
   }
 
   @discardableResult
-  public func saveVersion(workspace: PromptWorkspace, note: String = "") throws -> VersionSummary {
+  public func saveVersion(
+    workspace: PromptWorkspace, note: String = "", writeSnapshot: ((Int) throws -> Void)? = nil
+  ) throws -> VersionSummary {
     try validateSections(workspace.sections)
     return try withConnection(write: true) { database in
       try ensureProject(database, projectID: workspace.id)
@@ -741,6 +964,7 @@ public final class WorkspaceRepository {
         "UPDATE projects SET current_version = ?, updated_at = ? WHERE id = ?",
         [.integer(Int64(number)), .text(timestamp), .text(workspace.id)]
       )
+      try writeSnapshot?(number)
       return VersionSummary(id: versionID, number: number, note: note, createdAt: timestamp)
     }
   }
@@ -905,6 +1129,15 @@ public final class WorkspaceRepository {
         )
       }
       return ComparisonSnapshot(kind: kind, sourceVersion: sourceVersion, sections: sections)
+    }
+  }
+
+  public func comparisonUpdatedAt(projectID: String) throws -> String? {
+    try withConnection { database in
+      let statement = try SQLiteStatement(database: database,
+        sql: "SELECT updated_at FROM comparisons WHERE project_id = ?")
+      try statement.bind([.text(projectID)])
+      return try statement.step() == SQLITE_ROW ? statement.text(0) : nil
     }
   }
 
